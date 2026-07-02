@@ -20,6 +20,7 @@ class Promotion(Base):
     brand_name = Column(String(200), nullable=False, default="")
     operation_label = Column(String(200), nullable=True)  # e.g. product/operation name, to disambiguate multi-op brands
     highco_reference = Column(Text, nullable=False)  # URL or identifier extracted from the QR code
+    concerned_products = Column(Text, nullable=True)  # products/variants covered by this one QR link, e.g. multiple emails merged into it
     valid_from = Column(Date, nullable=True)
     valid_until = Column(Date, nullable=True)
     status = Column(String(20), nullable=False, default=STATUS_PENDING)

@@ -11,9 +11,13 @@ logger = logging.getLogger("jobs")
 def run_gmail_poll():
     db = SessionLocal()
     try:
-        created = poll_gmail_once(db)
-        if created:
-            logger.info("%d nouvelle(s) promotion(s) en attente depuis Gmail", created)
+        created, merged = poll_gmail_once(db)
+        if created or merged:
+            logger.info(
+                "%d nouvelle(s) promotion(s) en attente, %d mail(s) fusionné(s) dans une promotion existante",
+                created,
+                merged,
+            )
     except Exception:
         logger.exception("Échec du polling Gmail")
     finally:

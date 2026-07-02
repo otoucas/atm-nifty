@@ -157,9 +157,10 @@ async def admin_pending_validate(request: Request, db: Session = Depends(get_db)
     pending = db.query(Promotion).filter(Promotion.status == STATUS_PENDING).all()
     validated_count = 0
     for promo in pending:
-        brand_key, op_key, from_key, until_key = (
+        brand_key, op_key, products_key, from_key, until_key = (
             f"brand_name_{promo.id}",
             f"operation_label_{promo.id}",
+            f"concerned_products_{promo.id}",
             f"valid_from_{promo.id}",
             f"valid_until_{promo.id}",
         )
@@ -167,6 +168,8 @@ async def admin_pending_validate(request: Request, db: Session = Depends(get_db)
             promo.brand_name = form[brand_key] or promo.brand_name
         if op_key in form:
             promo.operation_label = form[op_key] or None
+        if products_key in form:
+            promo.concerned_products = form[products_key] or None
         if from_key in form and form[from_key]:
             promo.valid_from = datetime.date.fromisoformat(form[from_key])
         if until_key in form and form[until_key]:
@@ -332,5 +335,8 @@ def admin_history(request: Request, db: Session = Depends(get_db)):
 @app.post("/admin/poll-now")
 def admin_poll_now(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
-    created = poll_gmail_once(db)
-    return RedirectResponse(f"/admin/pending?flash={created} nouvelle(s) promotion(s) importée(s)", status_code=303)
+    created, merged = poll_gmail_once(db)
+    return RedirectResponse(
+        f"/admin/pending?flash={created} nouvelle(s) promotion(s), {merged} fusionnée(s) avec une promotion existante",
+        status_code=303,
+    )

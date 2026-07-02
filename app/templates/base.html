@@ -36,6 +36,19 @@
         document.addEventListener('mouseup', onUp);
       });
     });
+
+    const lightbox = document.createElement('div');
+    lightbox.className = 'lightbox';
+    lightbox.innerHTML = '<img>';
+    lightbox.addEventListener('click', () => lightbox.classList.remove('open'));
+    document.body.appendChild(lightbox);
+    document.querySelectorAll('img.thumb').forEach(img => {
+      img.addEventListener('click', e => {
+        e.preventDefault();
+        lightbox.querySelector('img').src = img.src;
+        lightbox.classList.add('open');
+      });
+    });
   </script>
 </body>
 </html>

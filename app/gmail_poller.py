@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .date_extraction import extract_validity_dates
 from .logos import fetch_logo_url
-from .models import STATUS_PENDING, SOURCE_EMAIL, Promotion, ProcessedEmail
+from .models import STATUS_ARCHIVED, STATUS_PENDING, SOURCE_EMAIL, Promotion, ProcessedEmail
 from .qrcode_utils import extract_best_product_image, extract_qr_payload
 
 logger = logging.getLogger("gmail_poller")
@@ -128,6 +128,33 @@ def _guess_operation_label(subject: str) -> str:
     return match.group(0).replace(" ", "") if match else ""
 
 
+def _find_mergeable_promotion(db: Session, highco_reference: str) -> "Promotion | None":
+    """Multiple emails (initial send, reminders, renewals) often reuse the
+    exact same QR link — that's the same operation, so it should stay a
+    single tile rather than spawning a duplicate. Deliberately excludes
+    archived promotions: an admin archiving one is a deliberate rejection,
+    not something a later resend should silently revive."""
+    return (
+        db.query(Promotion)
+        .filter(Promotion.highco_reference == highco_reference, Promotion.status != STATUS_ARCHIVED)
+        .first()
+    )
+
+
+def _merge_into_existing(existing: Promotion, brand_name: str, valid_from, valid_until, logo_path: str) -> None:
+    existing_products = existing.concerned_products or existing.brand_name or ""
+    candidate = (brand_name or "").strip()
+    if candidate and candidate.lower() not in existing_products.lower():
+        existing.concerned_products = f"{existing_products}, {candidate}" if existing_products else candidate
+
+    if not existing.valid_from and valid_from:
+        existing.valid_from = valid_from
+    if valid_until and (not existing.valid_until or valid_until > existing.valid_until):
+        existing.valid_until = valid_until
+    if not existing.logo_path and not existing.logo_url and logo_path:
+        existing.logo_path = logo_path
+
+
 def _connect():
     if not config.GMAIL_ADDRESS or not config.GMAIL_APP_PASSWORD:
         raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD non configurés")
@@ -159,19 +186,22 @@ def _archive_from_inbox(conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
         logger.exception("Échec de l'archivage du mail (uid=%s)", uid)
 
 
-def poll_gmail_once(db: Session) -> int:
+def poll_gmail_once(db: Session) -> tuple:
     """Fetch new messages, extract QR payloads, create pending promotions.
 
-    Returns the number of new pending promotions created.
+    Returns (created, merged): new pending promotions created, and emails
+    that matched an existing promotion's QR link and were merged into it
+    instead of creating a duplicate.
     """
     conn = _connect()
     created = 0
+    merged = 0
     try:
         search_criteria = _build_search_criteria(config.GMAIL_SENDER_FILTER)
         status, data = conn.uid("SEARCH", None, search_criteria)
         if status != "OK":
             logger.warning("IMAP search failed: %s", status)
-            return 0
+            return 0, 0
 
         message_uids = data[0].split()
         for uid in message_uids:
@@ -212,21 +242,29 @@ def poll_gmail_once(db: Session) -> int:
                     if product_image:
                         logo_path = _save_product_image(*product_image)
 
-                promo = Promotion(
-                    brand_name=brand_name,
-                    operation_label=operation_label or None,
-                    highco_reference=qr_payload,
-                    status=STATUS_PENDING,
-                    source=SOURCE_EMAIL,
-                    raw_email_subject=subject,
-                    source_message_id=message_id,
-                    logo_path=logo_path,
-                    logo_url=None if logo_path else fetch_logo_url(brand_name),
-                    valid_from=valid_from,
-                    valid_until=valid_until,
-                )
-                db.add(promo)
-                created += 1
+                existing = _find_mergeable_promotion(db, qr_payload)
+                if existing:
+                    _merge_into_existing(existing, brand_name, valid_from, valid_until, logo_path)
+                    db.flush()
+                    merged += 1
+                else:
+                    promo = Promotion(
+                        brand_name=brand_name,
+                        operation_label=operation_label or None,
+                        concerned_products=brand_name,
+                        highco_reference=qr_payload,
+                        status=STATUS_PENDING,
+                        source=SOURCE_EMAIL,
+                        raw_email_subject=subject,
+                        source_message_id=message_id,
+                        logo_path=logo_path,
+                        logo_url=None if logo_path else fetch_logo_url(brand_name),
+                        valid_from=valid_from,
+                        valid_until=valid_until,
+                    )
+                    db.add(promo)
+                    db.flush()  # make it visible to _find_mergeable_promotion on later iterations (session has autoflush=False)
+                    created += 1
                 if config.GMAIL_ARCHIVE_AFTER_PROCESSING:
                     _archive_from_inbox(conn, uid)
             else:
@@ -238,4 +276,4 @@ def poll_gmail_once(db: Session) -> int:
     finally:
         conn.logout()
 
-    return created
+    return created, merged

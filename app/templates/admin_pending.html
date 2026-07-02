@@ -11,13 +11,14 @@
   <td><input type="checkbox" name="selected" value="{{ promo.id }}"></td>
   <td>
     {% if promo.logo_path %}
-      <img src="/media/logos/{{ promo.logo_path }}" alt="" style="height:36px; max-width:60px; object-fit:contain;">
+      <img class="thumb" src="/media/logos/{{ promo.logo_path }}" alt="" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;">
     {% elif promo.logo_url %}
-      <img src="{{ promo.logo_url }}" alt="" style="height:36px; max-width:60px; object-fit:contain;" onerror="this.style.display='none'">
+      <img class="thumb" src="{{ promo.logo_url }}" alt="" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;" onerror="this.style.display='none'">
     {% else %}—{% endif %}
   </td>
   <td><input type="text" name="brand_name_{{ promo.id }}" value="{{ promo.brand_name }}" required></td>
   <td><input type="text" name="operation_label_{{ promo.id }}" value="{{ promo.operation_label or '' }}"></td>
+  <td><input type="text" name="concerned_products_{{ promo.id }}" value="{{ promo.concerned_products or '' }}" placeholder="produits couverts par ce lien"></td>
   <td><input type="date" name="valid_from_{{ promo.id }}" value="{{ promo.valid_from or '' }}"></td>
   <td><input type="date" name="valid_until_{{ promo.id }}" value="{{ promo.valid_until or '' }}"></td>
   <td>{{ promo.source }}</td>
@@ -35,6 +36,7 @@
         <th>Visuel</th>
         <th>Marque</th>
         <th>Montant</th>
+        <th>Produits concernés</th>
         <th>Début</th>
         <th>Fin</th>
         <th>Source</th>

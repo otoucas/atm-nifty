@@ -8,17 +8,18 @@
 {% if active %}
 <div class="panel">
 <table class="admin-table">
-  <thead><tr><th>Visuel</th><th>Marque</th><th>Montant</th><th>Validité</th><th>Source</th><th></th></tr></thead>
+  <thead><tr><th>Visuel</th><th>Marque</th><th>Montant</th><th>Produits concernés</th><th>Validité</th><th>Source</th><th></th></tr></thead>
   <tbody>
     {% for promo in active %}
     <tr class="{{ 'row-conflict' if promo.id in conflict_ids else '' }}">
       <td>
-        {% if promo.logo_path %}<img src="/media/logos/{{ promo.logo_path }}" style="height:36px; max-width:60px; object-fit:contain;">
-        {% elif promo.logo_url %}<img src="{{ promo.logo_url }}" style="height:36px; max-width:60px; object-fit:contain;" onerror="this.style.display='none'">
+        {% if promo.logo_path %}<img class="thumb" src="/media/logos/{{ promo.logo_path }}" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;">
+        {% elif promo.logo_url %}<img class="thumb" src="{{ promo.logo_url }}" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;" onerror="this.style.display='none'">
         {% else %}—{% endif %}
       </td>
       <td>{{ promo.brand_name }}</td>
       <td>{{ promo.operation_label or '—' }}</td>
+      <td>{{ promo.concerned_products or '—' }}</td>
       <td>{{ promo.valid_from or '?' }} → {{ promo.valid_until or '?' }}</td>
       <td>{{ promo.source }}</td>
       <td style="display:flex; gap:8px; align-items:center;">
