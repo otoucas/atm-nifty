@@ -15,6 +15,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DATA_DIR / 'app.db'}"
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
+# Bypasses the admin login entirely — for prototyping only. Never enable this
+# on a deployment reachable beyond a fully trusted private network.
+ADMIN_AUTH_DISABLED = os.environ.get("ADMIN_AUTH_DISABLED", "0") == "1"
 
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")

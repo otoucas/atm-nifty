@@ -6,6 +6,8 @@ from . import config
 
 
 def is_admin(request: Request) -> bool:
+    if config.ADMIN_AUTH_DISABLED:
+        return True
     return bool(request.session.get("is_admin"))
 
 
