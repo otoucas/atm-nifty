@@ -5,11 +5,17 @@ for admin review/validation.
 Setup: enable 2-Step Verification on the Gmail account, then create an "App
 password" (Google Account > Security > App passwords) and set it as
 GMAIL_APP_PASSWORD. See README for details.
+
+GMAIL_MAILBOX can be any Gmail label, not just INBOX — useful when a mail
+filter already auto-labels/archives the relevant emails (e.g. a "Commercial"
+label) before they'd otherwise be seen sitting in the inbox.
 """
 
 import email
 import imaplib
 import logging
+import re
+from email.header import decode_header, make_header
 from email.message import Message
 
 from sqlalchemy.orm import Session
@@ -22,23 +28,52 @@ from .qrcode_utils import extract_qr_payload
 logger = logging.getLogger("gmail_poller")
 
 _CANDIDATE_CONTENT_TYPES = ("application/pdf", "image/png", "image/jpeg", "image/jpg", "image/gif")
+_CANDIDATE_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".gif")
+# Some senders mislabel attachments generically — fall back to the filename
+# extension rather than trusting Content-Type alone (seen in practice:
+# HighCo Nifty PDFs sent as application/octet-stream).
+_GENERIC_CONTENT_TYPES = ("application/octet-stream",)
 
 
 def _iter_candidate_parts(msg: Message):
     for part in msg.walk():
         content_type = part.get_content_type()
         disposition = part.get("Content-Disposition", "")
-        if content_type in _CANDIDATE_CONTENT_TYPES and (
+        filename = part.get_filename() or ""
+        is_candidate_type = content_type in _CANDIDATE_CONTENT_TYPES
+        is_candidate_by_extension = content_type in _GENERIC_CONTENT_TYPES and filename.lower().endswith(
+            _CANDIDATE_EXTENSIONS
+        )
+        if (is_candidate_type or is_candidate_by_extension) and (
             "attachment" in disposition or "inline" in disposition or content_type == "application/pdf"
         ):
             payload = part.get_payload(decode=True)
             if payload:
-                yield part.get_filename() or "", content_type, payload
+                yield filename, content_type, payload
+
+
+def _decode_subject(raw_subject: str) -> str:
+    if not raw_subject:
+        return ""
+    try:
+        return str(make_header(decode_header(raw_subject)))
+    except (ValueError, LookupError):
+        return raw_subject
+
+
+# HighCo Nifty subjects consistently look like "PROMO NIFTY <BRAND> 5€ de
+# remise ..." — the brand name sits between the fixed prefix and the first
+# digit (the discount amount). Best-effort only: the admin reviews/corrects
+# every promotion on the validation screen regardless.
+_NIFTY_SUBJECT_PATTERN = re.compile(r"PROMO\s+NIFTY\s+(.+?)\s+\d", re.IGNORECASE)
 
 
 def _guess_brand_name(subject: str) -> str:
-    # Best-effort placeholder — the admin corrects this during validation.
-    return (subject or "Promotion à nommer").strip()[:200]
+    decoded = _decode_subject(subject)
+    match = _NIFTY_SUBJECT_PATTERN.search(decoded)
+    if match:
+        return match.group(1).strip()[:200]
+    return (decoded or "Promotion à nommer").strip()[:200]
 
 
 def _connect():
@@ -50,6 +85,28 @@ def _connect():
     return conn
 
 
+def _build_search_criteria(sender_filter: str) -> str:
+    """GMAIL_SENDER_FILTER may hold several comma-separated domains/addresses
+    — combine them with IMAP's nested OR so any of them matches."""
+    senders = [s.strip() for s in sender_filter.split(",") if s.strip()]
+    if not senders:
+        return "ALL"
+    criteria = f'FROM "{senders[0]}"'
+    for sender in senders[1:]:
+        criteria = f'OR ({criteria}) (FROM "{sender}")'
+    return f"({criteria})"
+
+
+def _archive_from_inbox(conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
+    """Remove the \\Inbox label (Gmail IMAP extension) — a no-op if the
+    message was already archived (e.g. auto-labelled out of the inbox by a
+    mail filter)."""
+    try:
+        conn.uid("STORE", uid, "-X-GM-LABELS", "(\\Inbox)")
+    except imaplib.IMAP4.error:
+        logger.exception("Échec de l'archivage du mail (uid=%s)", uid)
+
+
 def poll_gmail_once(db: Session) -> int:
     """Fetch new messages, extract QR payloads, create pending promotions.
 
@@ -58,27 +115,25 @@ def poll_gmail_once(db: Session) -> int:
     conn = _connect()
     created = 0
     try:
-        search_criteria = "ALL"
-        if config.GMAIL_SENDER_FILTER:
-            search_criteria = f'(FROM "{config.GMAIL_SENDER_FILTER}")'
-        status, data = conn.search(None, search_criteria)
+        search_criteria = _build_search_criteria(config.GMAIL_SENDER_FILTER)
+        status, data = conn.uid("SEARCH", None, search_criteria)
         if status != "OK":
             logger.warning("IMAP search failed: %s", status)
             return 0
 
-        message_numbers = data[0].split()
-        for num in message_numbers:
-            status, msg_data = conn.fetch(num, "(RFC822)")
+        message_uids = data[0].split()
+        for uid in message_uids:
+            status, msg_data = conn.uid("FETCH", uid, "(RFC822)")
             if status != "OK" or not msg_data or msg_data[0] is None:
                 continue
             raw_bytes = msg_data[0][1]
             msg = email.message_from_bytes(raw_bytes)
-            message_id = msg.get("Message-ID") or f"no-id-{num.decode()}"
+            message_id = msg.get("Message-ID") or f"no-id-{uid.decode()}"
 
             if db.query(ProcessedEmail).filter_by(message_id=message_id).first():
                 continue
 
-            subject = msg.get("Subject", "")
+            subject = _decode_subject(msg.get("Subject", ""))
             qr_payload = None
             for filename, content_type, payload in _iter_candidate_parts(msg):
                 qr_payload = extract_qr_payload(payload, filename=filename, content_type=content_type)
@@ -97,6 +152,8 @@ def poll_gmail_once(db: Session) -> int:
                 )
                 db.add(promo)
                 created += 1
+                if config.GMAIL_ARCHIVE_AFTER_PROCESSING:
+                    _archive_from_inbox(conn, uid)
             else:
                 logger.info("Aucun QR trouvé dans le mail %r — ignoré", subject)
 

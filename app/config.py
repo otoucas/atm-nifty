@@ -20,7 +20,10 @@ GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 GMAIL_IMAP_HOST = os.environ.get("GMAIL_IMAP_HOST", "imap.gmail.com")
 GMAIL_MAILBOX = os.environ.get("GMAIL_MAILBOX", "INBOX")
-GMAIL_SENDER_FILTER = os.environ.get("GMAIL_SENDER_FILTER", "")  # e.g. "highco.com" — optional narrowing filter
+GMAIL_SENDER_FILTER = os.environ.get("GMAIL_SENDER_FILTER", "")  # comma-separated domains/addresses, e.g. "highco-data.fr,gestion-promo.fr"
+# Remove the \Inbox label (Gmail-specific) from an email once a promotion has
+# been extracted from it, so the inbox doesn't fill up with processed mail.
+GMAIL_ARCHIVE_AFTER_PROCESSING = os.environ.get("GMAIL_ARCHIVE_AFTER_PROCESSING", "1") == "1"
 
 POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES", "15"))
 ARCHIVE_CHECK_INTERVAL_MINUTES = int(os.environ.get("ARCHIVE_CHECK_INTERVAL_MINUTES", "60"))
