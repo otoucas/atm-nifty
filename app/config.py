@@ -52,3 +52,5 @@ ERPNEXT_API_SECRET = os.environ.get("ERPNEXT_API_SECRET", "")
 # Actif seulement si l'URL et les identifiants sont renseignés.
 ERPNEXT_SYNC_ENABLED = bool(ERPNEXT_URL and ERPNEXT_API_KEY and ERPNEXT_API_SECRET)
 ERPNEXT_SYNC_INTERVAL_MINUTES = int(os.environ.get("ERPNEXT_SYNC_INTERVAL_MINUTES", "10"))
+# Fréquence de relecture de l'état autoritatif depuis ERPNext (minutes).
+ERPNEXT_PULL_INTERVAL_MINUTES = int(os.environ.get("ERPNEXT_PULL_INTERVAL_MINUTES", "5"))

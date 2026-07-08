@@ -123,3 +123,20 @@ def run_erpnext_sync():
         logger.exception("Échec de la synchronisation ERPNext")
     finally:
         db.close()
+
+
+def run_erpnext_pull():
+    """Relit l'état autoritatif depuis ERPNext (validation/rejet décidés dans le
+    desk, adoption des promos créées côté ERPNext). Best-effort."""
+    from .erpnext_sync import pull_from_erpnext
+
+    db = SessionLocal()
+    try:
+        updated, adopted, errors = pull_from_erpnext(db)
+        if updated or adopted or errors:
+            logger.info("Relecture ERPNext : %d statut(s) mis à jour, %d adoptée(s), %d erreur(s)",
+                        updated, adopted, errors)
+    except Exception:
+        logger.exception("Échec de la relecture ERPNext")
+    finally:
+        db.close()

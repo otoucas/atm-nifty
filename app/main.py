@@ -18,7 +18,7 @@ from . import config, highco
 from .auth import check_password, is_admin
 from .database import get_db, init_db
 from .gmail_poller import poll_gmail_once
-from .jobs import run_auto_archive, run_daily_review, run_erpnext_sync, run_gmail_poll
+from .jobs import run_auto_archive, run_daily_review, run_erpnext_pull, run_erpnext_sync, run_gmail_poll
 from .monthly_preview import run_monthly_preview
 from .logos import fetch_logo_url
 from .models import (
@@ -62,6 +62,10 @@ def on_startup():
     if config.ERPNEXT_SYNC_ENABLED:
         scheduler.add_job(
             run_erpnext_sync, "interval", minutes=config.ERPNEXT_SYNC_INTERVAL_MINUTES, id="erpnext_sync"
+        )
+    if config.ERPNEXT_SYNC_ENABLED:
+        scheduler.add_job(
+            run_erpnext_pull, "interval", minutes=config.ERPNEXT_PULL_INTERVAL_MINUTES, id="erpnext_pull"
         )
     scheduler.start()
 
