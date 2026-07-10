@@ -1117,7 +1117,7 @@ def superadmin_new_store(
     return RedirectResponse(f"/superadmin?flash={flash}", status_code=303)
 
 
-@app.get("/request-store", response_class=HTMLResponse)
+@app.get("/hello", response_class=HTMLResponse)
 def request_store_form(request: Request):
     return templates.TemplateResponse(
         "request_store.html",
@@ -1131,7 +1131,7 @@ def request_store_form(request: Request):
     )
 
 
-@app.post("/request-store", response_class=HTMLResponse)
+@app.post("/hello", response_class=HTMLResponse)
 def request_store_submit(
     request: Request,
     db: Session = Depends(get_db),

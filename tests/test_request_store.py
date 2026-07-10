@@ -1,4 +1,4 @@
-"""Formulaire public d'inscription (/request-store, ajouté le 2026-07-10) —
+"""Formulaire public d'inscription (/hello, ajouté le 2026-07-10) —
 en libre-service, sans mot de passe, mais avec les mêmes garde-fous que la
 création via /superadmin/stores/new : email @hellopharmacie.com obligatoire,
 un email = un sigle, alerte en cas de sigle déjà pris, anti-abus.
@@ -26,7 +26,7 @@ def test_request_store_form_reachable_without_login(db):
     client = _client(db)
     try:
         with client as c:
-            resp = c.get("/request-store")
+            resp = c.get("/hello")
         assert resp.status_code == 200
     finally:
         main.app.dependency_overrides.clear()
@@ -38,7 +38,7 @@ def test_request_store_creates_inactive_store_and_sends_verification(db, monkeyp
     client = _client(db)
     try:
         with client as c:
-            resp = c.post("/request-store", data=_form("Pharmacie de Lyon", "LYO"))
+            resp = c.post("/hello", data=_form("Pharmacie de Lyon", "LYO"))
         assert resp.status_code == 200
         assert "confirmation" in resp.text
         store = db.query(Store).filter(Store.code == "LYO").first()
@@ -56,8 +56,8 @@ def test_request_store_rejects_duplicate_code_and_alerts(db, monkeypatch):
     client = _client(db)
     try:
         with client as c:
-            c.post("/request-store", data=_form("Pharmacie A", "LYO", email_local_part="premier"))
-            resp = c.post("/request-store", data=_form("Pharmacie B", "LYO", email_local_part="second"))
+            c.post("/hello", data=_form("Pharmacie A", "LYO", email_local_part="premier"))
+            resp = c.post("/hello", data=_form("Pharmacie B", "LYO", email_local_part="second"))
         assert resp.status_code == 400
         assert "déjà utilisé" in resp.text
         assert alerts == ["LYO"]
@@ -70,8 +70,8 @@ def test_request_store_rejects_second_store_for_same_email(db, monkeypatch):
     client = _client(db)
     try:
         with client as c:
-            c.post("/request-store", data=_form("Pharmacie A", "AAA", email_local_part="meme"))
-            resp = c.post("/request-store", data=_form("Pharmacie B", "BBB", email_local_part="meme"))
+            c.post("/hello", data=_form("Pharmacie A", "AAA", email_local_part="meme"))
+            resp = c.post("/hello", data=_form("Pharmacie B", "BBB", email_local_part="meme"))
         assert resp.status_code == 400
         assert "un seul sigle" in resp.text
         assert db.query(Store).filter(Store.code == "BBB").first() is None
@@ -85,9 +85,9 @@ def test_request_store_rate_limited_after_threshold(db, monkeypatch):
     client = _client(db)
     try:
         with client as c:
-            c.post("/request-store", data=_form("Pharmacie A", "AAA", email_local_part="a"))
-            c.post("/request-store", data=_form("Pharmacie B", "BBB", email_local_part="b"))
-            resp = c.post("/request-store", data=_form("Pharmacie C", "CCC", email_local_part="c"))
+            c.post("/hello", data=_form("Pharmacie A", "AAA", email_local_part="a"))
+            c.post("/hello", data=_form("Pharmacie B", "BBB", email_local_part="b"))
+            resp = c.post("/hello", data=_form("Pharmacie C", "CCC", email_local_part="c"))
         assert resp.status_code == 400
         assert "Trop de demandes" in resp.text
         assert db.query(Store).filter(Store.code == "CCC").first() is None
@@ -102,7 +102,7 @@ def test_request_store_does_not_require_superadmin_password(db, monkeypatch):
     client = _client(db)
     try:
         with client as c:
-            resp = c.post("/request-store", data=_form("Pharmacie de Lyon", "LYO"), follow_redirects=False)
+            resp = c.post("/hello", data=_form("Pharmacie de Lyon", "LYO"), follow_redirects=False)
         assert resp.status_code == 200
     finally:
         main.app.dependency_overrides.clear()
