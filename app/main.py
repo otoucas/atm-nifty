@@ -111,13 +111,25 @@ def _mount_prefix(request: Request) -> str:
 
 
 def get_store_by_code(request: Request, code: str, db: Session = Depends(get_db)) -> Store:
+    """Utilisé pour la grille/génération de code : accessible publiquement
+    pour TOUS les magasins actifs, y compris Artemare (integration=erpnext)
+    depuis le 2026-07-10 — seuls ses réglages/admin restent protégés, voir
+    get_store_for_admin_by_code ci-dessous."""
     store = db.query(Store).filter(Store.code == code.upper(), Store.is_active.is_(True)).first()
     if not store:
         raise HTTPException(status_code=404, detail="Point de vente inconnu")
+    return store
+
+
+def get_store_for_admin_by_code(request: Request, code: str, db: Session = Depends(get_db)) -> Store:
+    """Comme get_store_by_code, mais pour les routes /{code}/admin/* : bloque
+    en plus l'accès à un magasin "erpnext" (Artemare) à travers la passerelle
+    publique — sa grille est publique depuis le 2026-07-10, mais ses réglages
+    doivent rester réservés au mot de passe admin (ils pilotent la synchro
+    ERPNext)."""
+    store = get_store_by_code(request, code, db)
     if _is_public_gateway(request) and store.integration == INTEGRATION_ERPNEXT:
-        # Ne devrait déjà plus arriver ici (bloqué par nginx) — filet de
-        # sécurité applicatif si la config nginx changeait un jour.
-        raise HTTPException(status_code=404, detail="Point de vente inconnu")
+        raise HTTPException(status_code=404, detail="Introuvable")
     return store
 
 
@@ -280,7 +292,7 @@ def _admin_login_form_response(request: Request, store: Store):
 
 
 @app.get("/{code}/admin/login", response_class=HTMLResponse)
-def admin_login_form_for_store(request: Request, store: Store = Depends(get_store_by_code)):
+def admin_login_form_for_store(request: Request, store: Store = Depends(get_store_for_admin_by_code)):
     return _admin_login_form_response(request, store)
 
 
@@ -301,7 +313,7 @@ def _admin_login_response(request: Request, store: Store, password: str):
 
 
 @app.post("/{code}/admin/login", response_class=HTMLResponse)
-def admin_login_for_store(request: Request, store: Store = Depends(get_store_by_code), password: str = Form(...)):
+def admin_login_for_store(request: Request, store: Store = Depends(get_store_for_admin_by_code), password: str = Form(...)):
     return _admin_login_response(request, store, password)
 
 
@@ -311,7 +323,7 @@ def admin_login_legacy(request: Request, store: Store = Depends(get_default_stor
 
 
 @app.post("/{code}/admin/logout")
-def admin_logout_for_store(request: Request, store: Store = Depends(get_store_by_code)):
+def admin_logout_for_store(request: Request, store: Store = Depends(get_store_for_admin_by_code)):
     request.session.clear()
     return RedirectResponse(f"/{store.code}/", status_code=303)
 
@@ -346,7 +358,7 @@ def _admin_pending_response(request: Request, db: Session, store: Store):
 
 
 @app.get("/{code}/admin/pending", response_class=HTMLResponse)
-def admin_pending_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)):
+def admin_pending_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)):
     return _admin_pending_response(request, db, store)
 
 
@@ -394,7 +406,7 @@ async def _admin_pending_validate_response(request: Request, db: Session, store:
 
 @app.post("/{code}/admin/pending/validate")
 async def admin_pending_validate_for_store(
-    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return await _admin_pending_validate_response(request, db, store)
 
@@ -431,7 +443,7 @@ async def _admin_pending_reject_reprocess_response(request: Request, db: Session
 
 @app.post("/{code}/admin/pending/reject-reprocess")
 async def admin_pending_reject_reprocess_for_store(
-    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return await _admin_pending_reject_reprocess_response(request, db, store)
 
@@ -464,7 +476,7 @@ async def _admin_pending_reject_archive_response(request: Request, db: Session, 
 
 @app.post("/{code}/admin/pending/reject-archive")
 async def admin_pending_reject_archive_for_store(
-    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return await _admin_pending_reject_archive_response(request, db, store)
 
@@ -488,7 +500,7 @@ def _admin_delete_promotion_response(promotion_id: int, request: Request, db: Se
 
 @app.post("/{code}/admin/promotions/{promotion_id}/delete")
 def admin_delete_promotion_for_store(
-    promotion_id: int, request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    promotion_id: int, request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return _admin_delete_promotion_response(promotion_id, request, db, store)
 
@@ -529,7 +541,7 @@ def _admin_promotions_response(request: Request, db: Session, store: Store):
 
 
 @app.get("/{code}/admin/promotions", response_class=HTMLResponse)
-def admin_promotions_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)):
+def admin_promotions_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)):
     return _admin_promotions_response(request, db, store)
 
 
@@ -550,7 +562,7 @@ def _admin_archive_promotion_response(promotion_id: int, request: Request, db: S
 
 @app.post("/{code}/admin/promotions/{promotion_id}/archive")
 def admin_archive_promotion_for_store(
-    promotion_id: int, request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    promotion_id: int, request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return _admin_archive_promotion_response(promotion_id, request, db, store)
 
@@ -581,7 +593,7 @@ async def admin_replace_logo_for_store(
     promotion_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    store: Store = Depends(get_store_by_code),
+    store: Store = Depends(get_store_for_admin_by_code),
     logo: UploadFile = File(...),
 ):
     return await _admin_replace_logo_response(promotion_id, request, db, store, logo)
@@ -615,7 +627,7 @@ async def _admin_set_product_codes_response(promotion_id: int, request: Request,
 
 @app.post("/{code}/admin/promotions/{promotion_id}/product-codes")
 async def admin_set_product_codes_for_store(
-    promotion_id: int, request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    promotion_id: int, request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return await _admin_set_product_codes_response(promotion_id, request, db, store)
 
@@ -635,7 +647,7 @@ def _admin_new_promotion_form_response(request: Request, store: Store):
 
 
 @app.get("/{code}/admin/promotions/new", response_class=HTMLResponse)
-def admin_new_promotion_form_for_store(request: Request, store: Store = Depends(get_store_by_code)):
+def admin_new_promotion_form_for_store(request: Request, store: Store = Depends(get_store_for_admin_by_code)):
     return _admin_new_promotion_form_response(request, store)
 
 
@@ -697,7 +709,7 @@ async def _admin_new_promotion_response(
 async def admin_new_promotion_for_store(
     request: Request,
     db: Session = Depends(get_db),
-    store: Store = Depends(get_store_by_code),
+    store: Store = Depends(get_store_for_admin_by_code),
     brand_name: str = Form(...),
     operation_label: str = Form(""),
     valid_from: str = Form(""),
@@ -744,7 +756,7 @@ def _admin_history_response(request: Request, db: Session, store: Store):
 
 
 @app.get("/{code}/admin/history", response_class=HTMLResponse)
-def admin_history_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)):
+def admin_history_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)):
     return _admin_history_response(request, db, store)
 
 
@@ -765,7 +777,7 @@ def _admin_poll_now_response(request: Request, db: Session, store: Store):
 
 
 @app.post("/{code}/admin/poll-now")
-def admin_poll_now_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)):
+def admin_poll_now_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)):
     return _admin_poll_now_response(request, db, store)
 
 
@@ -822,7 +834,7 @@ def _admin_export_csv_response(request: Request, db: Session, store: Store):
 
 @app.get("/{code}/admin/export/promotions.csv")
 def admin_export_promotions_csv_for_store(
-    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_by_code)
+    request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)
 ):
     return _admin_export_csv_response(request, db, store)
 

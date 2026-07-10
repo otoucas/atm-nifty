@@ -195,14 +195,28 @@ def test_superadmin_rejects_code_not_three_letters(db):
         main.app.dependency_overrides.clear()
 
 
-def test_public_gateway_header_blocks_erpnext_store(db):
-    """The public gateway (atm.hellopharmacie.com/nifty/, added 2026-07-10)
-    must never reach Artemare, even if nginx's own deny rules were ever
-    misconfigured — this is the application-level safety net."""
+def test_public_gateway_header_allows_erpnext_store_grid(db):
+    """Depuis le 2026-07-10 (suite), la grille d'Artemare est volontairement
+    publique (sous le sigle ATM) pour rejoindre le format des autres points
+    de vente du groupement — seuls ses réglages restent protégés (test
+    suivant)."""
     client = _client(db)
     try:
         with client as c:
             resp = c.get(f"/{config.DEFAULT_STORE_CODE}/", headers={"X-Nifty-Public-Gateway": "1"})
+        assert resp.status_code == 200
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_public_gateway_header_blocks_erpnext_store_admin(db):
+    """La passerelle publique ne doit jamais atteindre les réglages/admin
+    d'Artemare, même si nginx était mal réglé un jour — filet de sécurité
+    applicatif (get_store_for_admin_by_code)."""
+    client = _client(db)
+    try:
+        with client as c:
+            resp = c.get(f"/{config.DEFAULT_STORE_CODE}/admin/pending", headers={"X-Nifty-Public-Gateway": "1"})
         assert resp.status_code == 404
     finally:
         main.app.dependency_overrides.clear()
