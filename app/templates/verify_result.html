@@ -9,7 +9,7 @@
   </div>
 {% else %}
   <div class="error-box">
-    Ce lien de confirmation est invalide ou a déjà été utilisé. Contactez la pharmacie Artemare si vous pensez qu'il s'agit d'une erreur.
+    {% if error %}{{ error }}{% else %}Ce lien de confirmation est invalide ou a déjà été utilisé. Contactez la pharmacie Artemare si vous pensez qu'il s'agit d'une erreur.{% endif %}
   </div>
 {% endif %}
 {% endblock %}

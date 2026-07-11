@@ -77,6 +77,9 @@ STORE_SESSION_DEFAULT_MINUTES = int(os.environ.get("STORE_SESSION_DEFAULT_MINUTE
 SESSION_COOKIE_MAX_AGE_DAYS = int(os.environ.get("SESSION_COOKIE_MAX_AGE_DAYS", "90"))
 # Durée de validité d'un lien "mot de passe oublié" (minutes).
 PASSWORD_RESET_TOKEN_VALIDITY_MINUTES = int(os.environ.get("PASSWORD_RESET_TOKEN_VALIDITY_MINUTES", "60"))
+# Durée de validité du lien de confirmation envoyé à la création d'un point de
+# vente (jours) — avant cela, ce lien n'expirait jamais.
+STORE_VERIFICATION_TOKEN_VALIDITY_DAYS = int(os.environ.get("STORE_VERIFICATION_TOKEN_VALIDITY_DAYS", "7"))
 
 # --- Envoi des emails de demande d'ouverture (confirmation, alerte, mot de
 # passe oublié) — VOLONTAIREMENT séparé de GMAIL_ADDRESS ci-dessus : ces

@@ -1262,12 +1262,19 @@ def request_store_submit(
     )
 
 
-def _invalid_token_response(request: Request):
+def _invalid_token_response(request: Request, error: str | None = None):
     return templates.TemplateResponse(
         "verify_result.html",
-        {"request": request, "mount_prefix": _mount_prefix(request), "ok": False, "store": None, "error": None},
+        {"request": request, "mount_prefix": _mount_prefix(request), "ok": False, "store": None, "error": error},
         status_code=404,
     )
+
+
+def _verification_token_expired(store: Store) -> bool:
+    if not store.created_at:
+        return False
+    age = datetime.datetime.utcnow() - store.created_at
+    return age > datetime.timedelta(days=config.STORE_VERIFICATION_TOKEN_VALIDITY_DAYS)
 
 
 @app.get("/verify/{token}", response_class=HTMLResponse)
@@ -1278,6 +1285,15 @@ def verify_store_email_form(token: str, request: Request, db: Session = Depends(
     store = db.query(Store).filter(Store.verification_token == token).first()
     if not store or store.email_verified_at:
         return _invalid_token_response(request)
+    if _verification_token_expired(store):
+        return _invalid_token_response(
+            request,
+            error=(
+                f"Ce lien de confirmation a expiré (validité : "
+                f"{config.STORE_VERIFICATION_TOKEN_VALIDITY_DAYS} jours). "
+                "Merci de recontacter la pharmacie Artemare pour en recevoir un nouveau."
+            ),
+        )
     return templates.TemplateResponse(
         "set_password.html",
         {
@@ -1301,6 +1317,15 @@ def verify_store_email_submit(
     store = db.query(Store).filter(Store.verification_token == token).first()
     if not store or store.email_verified_at:
         return _invalid_token_response(request)
+    if _verification_token_expired(store):
+        return _invalid_token_response(
+            request,
+            error=(
+                f"Ce lien de confirmation a expiré (validité : "
+                f"{config.STORE_VERIFICATION_TOKEN_VALIDITY_DAYS} jours). "
+                "Merci de recontacter la pharmacie Artemare pour en recevoir un nouveau."
+            ),
+        )
 
     error = None
     if len(password) < 8:
@@ -1309,13 +1334,14 @@ def verify_store_email_submit(
         error = "Les deux mots de passe ne correspondent pas."
 
     if error:
+        action = f"{config.PUBLIC_BASE_URL}/verify/{token}" if config.PUBLIC_BASE_URL else f"/verify/{token}"
         return templates.TemplateResponse(
             "set_password.html",
             {
                 "request": request,
                 "mount_prefix": _mount_prefix(request),
                 "store": store,
-                "action": f"/verify/{token}",
+                "action": action,
                 "error": error,
             },
             status_code=400,

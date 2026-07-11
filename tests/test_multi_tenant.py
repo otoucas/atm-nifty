@@ -253,6 +253,28 @@ def test_verify_rejects_mismatched_passwords(db, monkeypatch):
         main.app.dependency_overrides.clear()
 
 
+def test_verify_link_rejects_expired_token(db, monkeypatch):
+    import datetime
+
+    monkeypatch.setattr(main, "send_verification_email", lambda store: True)
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/superadmin/login", data={"password": config.ADMIN_PASSWORD})
+            c.post("/superadmin/stores/new", data=_new_store_form("Pharmacie de Lyon", "LYO"))
+            store = db.query(Store).filter(Store.code == "LYO").first()
+            store.created_at = datetime.datetime.utcnow() - datetime.timedelta(
+                days=config.STORE_VERIFICATION_TOKEN_VALIDITY_DAYS, hours=1
+            )
+            db.commit()
+
+            resp = c.get(f"/verify/{store.verification_token}")
+        assert resp.status_code == 404
+        assert "expiré" in resp.text
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_verify_link_rejects_unknown_or_reused_token(db, monkeypatch):
     monkeypatch.setattr(main, "send_verification_email", lambda store: True)
     client = _client(db)
