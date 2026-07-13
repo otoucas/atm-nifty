@@ -10,7 +10,7 @@
   </div>
 {% else %}
   {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
-  <form class="stacked" method="post" action="/hello">
+  <form class="stacked" method="post" action="{{ mount_prefix|default('') }}/hello">
     <label for="name">Nom de la pharmacie</label>
     <input type="text" id="name" name="name" required>
 
