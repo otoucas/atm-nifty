@@ -35,25 +35,28 @@
 </div>
 
 <div class="table-wrap" id="table-wrap" style="display:none">
-  <table class="admin-table promo-table">
+  <table class="admin-table promo-table" id="promo-table">
     <thead>
       <tr>
-        <th>Marque</th>
-        <th>Produits concernés</th>
-        <th>EAN</th>
-        <th>Valide du</th>
-        <th>Valide au</th>
+        <th data-sortable>Marque</th>
+        <th data-sortable>Promotion</th>
+        <th data-sortable>Produit</th>
+        <th data-sortable>EAN</th>
+        <th data-sortable>Valide du</th>
+        <th data-sortable>Valide au</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
-      {% for promo in promotions %}
-      <tr class="table-row{% if promo.id in conflict_ids %} conflict{% endif %}" data-brand="{{ promo.display_name|lower }}" data-products="{{ (promo.concerned_products or '')|lower }}" data-eans="{{ promo.product_codes_list|join(',') }}">
-        <td>{% if promo.id in conflict_ids %}<span class="conflict-badge" aria-hidden="true">⚠</span> {% endif %}{{ promo.display_name }}</td>
-        <td>{{ promo.concerned_products or "—" }}</td>
-        <td>{{ promo.product_codes_list|join(', ') or "—" }}</td>
-        <td>{{ promo.valid_from.strftime('%d/%m/%Y') if promo.valid_from else "—" }}</td>
-        <td>{{ promo.valid_until.strftime('%d/%m/%Y') if promo.valid_until else "—" }}</td>
+      {% for row in table_rows %}
+      {% set promo = row.promo %}
+      <tr class="table-row{% if promo.id in conflict_ids %} conflict{% endif %}" data-brand="{{ promo.brand_name|lower }}" data-products="{{ (row.product_name or promo.concerned_products or '')|lower }}" data-operation="{{ (promo.operation_label or '')|lower }}" data-eans="{{ row.ean }}">
+        <td>{% if promo.id in conflict_ids %}<span class="conflict-badge" aria-hidden="true">⚠</span> {% endif %}{{ promo.brand_name }}</td>
+        <td>{{ promo.operation_label or "—" }}</td>
+        <td>{{ row.product_name or "—" }}</td>
+        <td>{{ row.ean or "—" }}</td>
+        <td data-value="{{ promo.valid_from.isoformat() if promo.valid_from else '' }}">{{ promo.valid_from.strftime('%d/%m/%Y') if promo.valid_from else "—" }}</td>
+        <td data-value="{{ promo.valid_until.isoformat() if promo.valid_until else '' }}">{{ promo.valid_until.strftime('%d/%m/%Y') if promo.valid_until else "—" }}</td>
         <td><button type="button" class="table-generate-btn" onclick="openCodeModal('{{ url_prefix|default('') }}/generate/{{ promo.id }}')">Code</button></td>
       </tr>
       {% endfor %}
@@ -76,25 +79,6 @@
     grid.style.setProperty('--tile-size', next + 'px');
     localStorage.setItem('tileSize', next);
   }
-
-  // Vue tuiles/tableau, mémorisée comme le zoom.
-  const gridEl = document.getElementById('grid');
-  const tableWrap = document.getElementById('table-wrap');
-  const zoomControls = document.getElementById('zoom-controls');
-  const tilesBtn = document.getElementById('view-tiles-btn');
-  const tableBtn = document.getElementById('view-table-btn');
-
-  function setViewMode(mode) {
-    const isTable = mode === 'table';
-    if (gridEl) gridEl.style.display = isTable ? 'none' : '';
-    if (tableWrap) tableWrap.style.display = isTable ? '' : 'none';
-    if (zoomControls) zoomControls.style.display = isTable ? 'none' : '';
-    if (tilesBtn) tilesBtn.setAttribute('aria-pressed', String(!isTable));
-    if (tableBtn) tableBtn.setAttribute('aria-pressed', String(isTable));
-    localStorage.setItem('viewMode', mode);
-    applyFilters();
-  }
-  setViewMode(localStorage.getItem('viewMode') || 'tiles');
 
   // Recherche instantanée côté client — la liste est déjà chargée, pas besoin
   // d'un aller-retour serveur pour filtrer quelques dizaines de promotions.
@@ -157,7 +141,7 @@
   function itemMatches(query, el) {
     if (!query) return true;
     if (isEanQuery(query)) return eanMatches(query, el.dataset.eans);
-    return textMatches(query, el.dataset.brand) || textMatches(query, el.dataset.products);
+    return textMatches(query, el.dataset.brand) || textMatches(query, el.dataset.products) || textMatches(query, el.dataset.operation);
   }
 
   function applyFilters() {
@@ -180,6 +164,27 @@
     }
   }
 
+  // Vue tuiles/tableau, mémorisée comme le zoom. Placé après applyFilters
+  // (qu'il appelle dès l'initialisation) pour ne pas référencer searchInput
+  // et consorts avant leur déclaration plus haut.
+  const gridEl = document.getElementById('grid');
+  const tableWrap = document.getElementById('table-wrap');
+  const zoomControls = document.getElementById('zoom-controls');
+  const tilesBtn = document.getElementById('view-tiles-btn');
+  const tableBtn = document.getElementById('view-table-btn');
+
+  function setViewMode(mode) {
+    const isTable = mode === 'table';
+    if (gridEl) gridEl.style.display = isTable ? 'none' : '';
+    if (tableWrap) tableWrap.style.display = isTable ? '' : 'none';
+    if (zoomControls) zoomControls.style.display = isTable ? 'none' : '';
+    if (tilesBtn) tilesBtn.setAttribute('aria-pressed', String(!isTable));
+    if (tableBtn) tableBtn.setAttribute('aria-pressed', String(isTable));
+    localStorage.setItem('viewMode', mode);
+    applyFilters();
+  }
+  setViewMode(localStorage.getItem('viewMode') || 'tiles');
+
   // L'écran reste ouvert toute la journée au comptoir : on recharge la grille
   // périodiquement pour refléter les validations/expirations sans intervention.
   // Repoussé tant qu'une recherche est en cours de saisie, pour ne pas couper
@@ -192,6 +197,51 @@
 
   if (searchInput) {
     searchInput.addEventListener('input', () => { applyFilters(); resetReloadTimer(); });
-    applyFilters();
   }
+
+  // Tri des colonnes de la vue tableau — même mécanique que le tableau des
+  // dossiers sur Mercatofficine (analyse-officine/webapp/static/table-sort.js) :
+  // opt-in via data-sortable sur le <th>, valeur de tri = data-value du <td>
+  // si présent (nécessaire pour les dates JJ/MM/AAAA) sinon son texte, et les
+  // cellules vides ("—") sont toujours reléguées en fin de liste.
+  (function () {
+    var VIDE = '—';
+
+    function valeurCellule(ligne, index) {
+      var td = ligne.children[index];
+      if (!td) return { vide: true, valeur: '' };
+      var brute = td.getAttribute('data-value');
+      if (brute === null) brute = td.textContent.trim();
+      if (brute === '' || brute === VIDE) return { vide: true, valeur: '' };
+      return { vide: false, valeur: brute.toLowerCase() };
+    }
+
+    function trierTable(table, th, index) {
+      var tbody = table.tBodies[0];
+      if (!tbody) return;
+      var descendant = th.getAttribute('aria-sort') === 'ascending';
+      var lignes = Array.prototype.slice.call(tbody.rows);
+      lignes.sort(function (a, b) {
+        var va = valeurCellule(a, index);
+        var vb = valeurCellule(b, index);
+        if (va.vide && vb.vide) return 0;
+        if (va.vide) return 1;
+        if (vb.vide) return -1;
+        var cmp = va.valeur < vb.valeur ? -1 : va.valeur > vb.valeur ? 1 : 0;
+        return descendant ? -cmp : cmp;
+      });
+      lignes.forEach(function (ligne) { tbody.appendChild(ligne); });
+      table.querySelectorAll('th[data-sortable]').forEach(function (autre) { autre.removeAttribute('aria-sort'); });
+      th.setAttribute('aria-sort', descendant ? 'descending' : 'ascending');
+    }
+
+    var promoTable = document.getElementById('promo-table');
+    if (!promoTable) return;
+    promoTable.querySelectorAll('th[data-sortable]').forEach(function (th) {
+      th.addEventListener('click', function () {
+        var index = Array.prototype.indexOf.call(th.parentNode.children, th);
+        trierTable(promoTable, th, index);
+      });
+    });
+  })();
 </script>

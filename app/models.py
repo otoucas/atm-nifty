@@ -1,4 +1,5 @@
 import datetime
+from itertools import zip_longest
 
 from sqlalchemy import Boolean, Column, DateTime, Date, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -102,6 +103,31 @@ class Promotion(Base):
         if not self.product_codes:
             return []
         return [c.strip() for c in self.product_codes.split(",") if c.strip()]
+
+    @property
+    def product_rows(self) -> list[tuple[str, str]]:
+        """Une ligne (nom de produit, EAN) par produit couvert par cette
+        promotion — pour la vue tableau opérateur, où chaque EAN doit pouvoir
+        être vérifié individuellement plutôt que noyé dans une seule ligne
+        par promotion (demande Olivier du 2026-07-13). `concerned_products`
+        et `product_codes` sont deux champs texte saisis à la main,
+        virgule-séparés, en principe dans le même ordre — on les aligne du
+        mieux possible s'ils ne correspondent pas exactement en nombre."""
+        names = [p.strip() for p in (self.concerned_products or "").split(",") if p.strip()]
+        eans = self.product_codes_list
+        if not names and not eans:
+            return [("", "")]
+        if not eans:
+            return [(n, "") for n in names]
+        if not names:
+            return [("", e) for e in eans]
+        if len(names) == len(eans):
+            return list(zip(names, eans))
+        if len(names) == 1:
+            return [(names[0], e) for e in eans]
+        if len(eans) == 1:
+            return [(n, eans[0]) for n in names]
+        return [(n, e) for n, e in zip_longest(names, eans, fillvalue="")]
 
     @property
     def is_complete(self) -> bool:

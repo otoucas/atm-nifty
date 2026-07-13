@@ -484,6 +484,15 @@ table.promo-table th, table.promo-table td {
 }
 table.promo-table tr.conflict td:first-child { color: var(--danger); }
 
+/* Colonnes triables (tri au clic, voir le script en bas de _promotions_grid.html) —
+   même convention visuelle que le tableau des dossiers sur Mercatofficine. */
+table.promo-table th[data-sortable] { cursor: pointer; user-select: none; }
+table.promo-table th[data-sortable]:hover { color: var(--text); }
+table.promo-table th[data-sortable]::after { content: "↕"; opacity: 0.35; margin-left: 0.3rem; }
+table.promo-table th[aria-sort] { color: var(--accent-dark); }
+table.promo-table th[aria-sort="ascending"]::after { content: "↑"; opacity: 1; }
+table.promo-table th[aria-sort="descending"]::after { content: "↓"; opacity: 1; }
+
 .col-resize-handle {
   position: absolute;
   top: 0;

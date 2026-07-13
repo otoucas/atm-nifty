@@ -81,6 +81,39 @@ def test_grid_tiles_expose_product_and_ean_data_for_client_side_search(db):
         main.app.dependency_overrides.clear()
 
 
+def test_table_view_has_one_row_per_product_with_sortable_columns(db):
+    """Retour Olivier du 2026-07-13 : la vue tableau doit permettre de
+    vérifier chaque EAN individuellement (une ligne par produit, pas par
+    promotion), avec la marque et l'offre dans des colonnes séparées, et
+    des colonnes triables au clic (voir Promotion.product_rows)."""
+    store = _make_store(db, "LYO")
+    db.add(Promotion(
+        store_id=store.id,
+        brand_name="Fixodent",
+        operation_label="-30%",
+        highco_reference="ref-a",
+        status=STATUS_ACTIVE,
+        concerned_products="Crème adhésive, Poudre",
+        product_codes="3401560123456, 3401560123457",
+    ))
+    db.commit()
+
+    client = _client(db)
+    try:
+        with client as c:
+            resp = c.get("/LYO/")
+        assert resp.text.count('class="table-row') == 2
+        assert "data-sortable" in resp.text
+        assert "<td>Fixodent</td>" in resp.text
+        assert "<td>-30%</td>" in resp.text
+        assert "<td>Crème adhésive</td>" in resp.text
+        assert "<td>Poudre</td>" in resp.text
+        assert "<td>3401560123456</td>" in resp.text
+        assert "<td>3401560123457</td>" in resp.text
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_unknown_store_code_returns_404(db):
     client = _client(db)
     try:

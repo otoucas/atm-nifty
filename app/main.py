@@ -268,11 +268,19 @@ def _active_promotions(db: Session, store_id: int):
 
 def _grid_response(request: Request, db: Session, store: Store):
     promotions, conflict_ids = _active_promotions(db, store.id)
+    # Vue tableau : une ligne par produit/EAN (voir Promotion.product_rows),
+    # pas par promotion — pour pouvoir vérifier chaque EAN individuellement.
+    table_rows = [
+        {"promo": promo, "product_name": product_name, "ean": ean}
+        for promo in promotions
+        for product_name, ean in promo.product_rows
+    ]
     return templates.TemplateResponse(
         "operator_grid.html",
         {
             "request": request, "mount_prefix": _mount_prefix(request),
             "promotions": promotions,
+            "table_rows": table_rows,
             "conflict_ids": conflict_ids,
             "url_prefix": f"{_store_url_prefix(request, store)}",
             "store": store,
@@ -1098,12 +1106,14 @@ def _admin_export_eans_csv_response(request: Request, db: Session, store: Store)
     writer = csv.writer(buffer, delimiter=";")
     writer.writerow(["ean", "marque", "produit", "valide_du", "valide_au"])
     for promo in promotions:
-        for ean in promo.product_codes_list:
+        for product_name, ean in promo.product_rows:
+            if not ean:
+                continue
             writer.writerow(
                 [
                     ean,
                     promo.brand_name,
-                    promo.concerned_products or "",
+                    product_name or promo.concerned_products or "",
                     promo.valid_from.isoformat() if promo.valid_from else "",
                     promo.valid_until.isoformat() if promo.valid_until else "",
                 ]
