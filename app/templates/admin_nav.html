@@ -1,11 +1,26 @@
 <nav class="admin-nav">
-  <a href="{{ url_prefix|default('') }}/admin/pending">En attente</a>
   <a href="{{ url_prefix|default('') }}/admin/promotions">Promotions</a>
+  <a href="{{ url_prefix|default('') }}/admin/pending">En attente</a>
   <a href="{{ url_prefix|default('') }}/admin/promotions/new">+ Ajouter manuellement</a>
   <a href="{{ url_prefix|default('') }}/admin/history">Historique</a>
   <a href="{{ url_prefix|default('') }}/admin/mcp">Connexion IA (MCP)</a>
-  <a href="{{ url_prefix|default('') }}/admin/help">Aide</a>
   {% if store and store.integration == 'erpnext' %}
-  <form method="post" action="{{ url_prefix }}/admin/poll-now" class="spacer" style="margin:0;"><button type="submit">Relancer l'import Gmail</button></form>
+  <form method="post" action="{{ url_prefix }}/admin/poll-now" class="gmail-poll-form" style="margin:0;">
+    <button type="submit" class="gmail-poll-btn">Relancer l'import Gmail</button>
+  </form>
   {% endif %}
+  <a href="{{ url_prefix|default('') }}/admin/help" class="nav-right">Aide</a>
 </nav>
+<script>
+(function () {
+  var form = document.querySelector('.gmail-poll-form');
+  if (!form) return;
+  form.addEventListener('submit', function () {
+    var btn = form.querySelector('.gmail-poll-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    btn.textContent = 'Import en cours…';
+  });
+})();
+</script>

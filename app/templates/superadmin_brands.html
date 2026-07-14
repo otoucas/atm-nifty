@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block header %}Marques{% endblock %}
+{% block header_link %}<a href="/superadmin">Retour aux points de vente</a>{% endblock %}
+{% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+
+<p style="color:var(--muted); font-size:0.9rem; max-width:60ch;">
+  Un logo choisi ici est rattaché automatiquement à toutes les promotions de cette marque, dans tous les points de vente — évite que chaque pharmacie corrige le même logo mal détecté une à une. Une pharmacie qui uploade son propre visuel sur une promotion précise (page « Promotions ») garde la main dessus.
+</p>
+
+<div class="panel" style="margin-bottom:20px;">
+<table class="admin-table">
+  <thead><tr><th>Logo</th><th>Marque</th><th></th><th></th></tr></thead>
+  <tbody>
+    {% for brand in brands %}
+    <tr>
+      <td>
+        {% if brand.logo_path %}<img class="thumb" src="{{ mount_prefix|default('') }}/media/logos/{{ brand.logo_path }}" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;">
+        {% else %}—{% endif %}
+      </td>
+      <td>{{ brand.name }}</td>
+      <td>
+        <form method="post" action="/superadmin/brands/{{ brand.id }}/logo" enctype="multipart/form-data" style="margin:0; display:flex; gap:8px; align-items:center;">
+          <input type="file" name="logo" accept="image/*" required style="width:140px;">
+          <button type="submit">Remplacer</button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/superadmin/brands/{{ brand.id }}/delete" style="margin:0;" onsubmit="return confirm('Retirer « {{ brand.name }} » du registre de marques ? Les logos déjà rattachés aux promotions existantes ne sont pas retirés.');">
+          <button type="submit" style="background:var(--danger);">Retirer</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty-state">Aucune marque enregistrée.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="panel" style="padding:20px; max-width:480px;">
+  <h4 style="margin-top:0;">Ajouter une marque</h4>
+  <form class="stacked" method="post" action="/superadmin/brands/new" enctype="multipart/form-data">
+    <label for="name">Nom de la marque (tel qu'il apparaît sur les promotions)</label>
+    <input type="text" id="name" name="name" required>
+
+    <label for="logo">Logo</label>
+    <input type="file" id="logo" name="logo" accept="image/*" required>
+
+    <button type="submit">Ajouter</button>
+  </form>
+</div>
+{% endblock %}

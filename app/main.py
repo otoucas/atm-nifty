@@ -8,7 +8,7 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import config, contacts_directory, highco
 from .auth import check_password, hash_password, is_admin, verify_store_password
+from .brands import apply_brand_logo, apply_brand_logo_to_all_matching, find_brand
 from .database import get_db, init_db
 from .gmail_poller import poll_gmail_once
 from .jobs import run_auto_archive, run_daily_review, run_erpnext_pull, run_erpnext_sync, run_gmail_poll
@@ -29,6 +30,7 @@ from .models import (
     STATUS_ARCHIVED,
     STATUS_PENDING,
     SOURCE_MANUAL,
+    Brand,
     GeneratedCode,
     McpActivityLog,
     ProcessedEmail,
@@ -49,6 +51,7 @@ from .store_requests import (
 )
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("nifty")
 
 app = FastAPI(title="Codes promo pharmacie", redirect_slashes=False)
 # redirect_slashes désactivé : la redirection automatique de Starlette ("/atm"
@@ -697,6 +700,68 @@ def admin_archive_promotion_legacy(
     return _admin_archive_promotion_response(promotion_id, request, db, store)
 
 
+_PROMOTION_EDITABLE_FIELDS = {"brand_name", "operation_label", "valid_from", "valid_until"}
+
+
+def _admin_update_promotion_field_response(
+    promotion_id: int, request: Request, db: Session, store: Store, field: str, value: str
+):
+    """Édition en direct d'une cellule du tableau des promotions (voir
+    admin_promotions.html) — une case à la fois, sauvegardée par requête AJAX
+    au blur, sans recharger la page (demande Olivier du 2026-07-14)."""
+    _require_store_admin(request, store)
+    if field not in _PROMOTION_EDITABLE_FIELDS:
+        return JSONResponse({"ok": False, "error": "Champ non modifiable."}, status_code=400)
+    promo = db.query(Promotion).filter(Promotion.id == promotion_id, Promotion.store_id == store.id).first()
+    if not promo:
+        return JSONResponse({"ok": False, "error": "Promotion introuvable."}, status_code=404)
+
+    value = value.strip()
+    if field in ("valid_from", "valid_until"):
+        if not value:
+            setattr(promo, field, None)
+        else:
+            try:
+                setattr(promo, field, datetime.date.fromisoformat(value))
+            except ValueError:
+                return JSONResponse({"ok": False, "error": "Date invalide (attendu AAAA-MM-JJ)."}, status_code=400)
+    else:
+        if field == "brand_name" and not value:
+            return JSONResponse({"ok": False, "error": "La marque ne peut pas être vide."}, status_code=400)
+        setattr(promo, field, value or None)
+        if field == "brand_name":
+            # Un renommage peut faire correspondre (ou plus correspondre) une
+            # marque du registre coopératif — on ne réattache que si aucun
+            # visuel n'a déjà été choisi à la main pour cette promo.
+            apply_brand_logo(db, promo)
+    db.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/{code}/admin/promotions/{promotion_id}/field")
+async def admin_update_promotion_field_for_store(
+    promotion_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    store: Store = Depends(get_store_for_admin_by_code),
+    field: str = Form(...),
+    value: str = Form(""),
+):
+    return _admin_update_promotion_field_response(promotion_id, request, db, store, field, value)
+
+
+@app.post("/admin/promotions/{promotion_id}/field")
+async def admin_update_promotion_field_legacy(
+    promotion_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    store: Store = Depends(get_default_store),
+    field: str = Form(...),
+    value: str = Form(""),
+):
+    return _admin_update_promotion_field_response(promotion_id, request, db, store, field, value)
+
+
 async def _admin_replace_logo_response(promotion_id: int, request: Request, db: Session, store: Store, logo: UploadFile):
     _require_store_admin(request, store)
     promo = db.query(Promotion).filter(Promotion.id == promotion_id, Promotion.store_id == store.id).first()
@@ -861,6 +926,7 @@ async def _admin_new_promotion_response(
         validated_at=datetime.datetime.utcnow(),
         logo_url=fetch_logo_url(brand_name.strip()),
     )
+    apply_brand_logo(db, promo)
     db.add(promo)
     db.commit()
     return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/promotions", status_code=303)
@@ -1094,11 +1160,28 @@ async def admin_help_suggestion_legacy(request: Request, store: Store = Depends(
 
 def _admin_poll_now_response(request: Request, db: Session, store: Store):
     _require_store_admin(request, store)
+    prefix = _store_url_prefix(request, store)
     if store.integration != INTEGRATION_ERPNEXT:
-        raise HTTPException(status_code=404, detail="Pas de relevé Gmail pour ce point de vente")
-    created, merged = poll_gmail_once(db)
+        return RedirectResponse(
+            f"{prefix}/admin/pending?flash=Aucun compte Gmail lié à ce point de vente — le relevé automatique n'est pas disponible ici.",
+            status_code=303,
+        )
+    if not config.GMAIL_ADDRESS or not config.GMAIL_APP_PASSWORD:
+        logger.warning("Relevé Gmail demandé pour %s mais GMAIL_ADDRESS/GMAIL_APP_PASSWORD ne sont pas configurés", store.code)
+        return RedirectResponse(
+            f"{prefix}/admin/pending?flash=Le compte Gmail n'est pas configuré côté serveur (adresse ou mot de passe d'application manquant) — contactez le groupement.",
+            status_code=303,
+        )
+    try:
+        created, merged = poll_gmail_once(db)
+    except Exception:
+        logger.exception("Échec du relevé Gmail à la demande pour %s", store.code)
+        return RedirectResponse(
+            f"{prefix}/admin/pending?flash=Le relevé Gmail a échoué — réessayez dans quelques minutes, ou contactez le groupement si ça persiste.",
+            status_code=303,
+        )
     return RedirectResponse(
-        f"{_store_url_prefix(request, store)}/admin/pending?flash={created} nouvelle(s) promotion(s), {merged} fusionnée(s) avec une promotion existante",
+        f"{prefix}/admin/pending?flash={created} nouvelle(s) promotion(s), {merged} fusionnée(s) avec une promotion existante",
         status_code=303,
     )
 
@@ -1432,6 +1515,89 @@ def superadmin_store_requests(request: Request, db: Session = Depends(get_db)):
             "OUTCOME_LABELS": _OUTCOME_LABELS,
         },
     )
+
+
+@app.get("/superadmin/brands", response_class=HTMLResponse)
+def superadmin_brands(request: Request, db: Session = Depends(get_db)):
+    _require_superadmin(request)
+    brands = db.query(Brand).order_by(func.lower(Brand.name)).all()
+    return templates.TemplateResponse(
+        "superadmin_brands.html",
+        {
+            "request": request,
+            "mount_prefix": _mount_prefix(request),
+            "brands": brands,
+            "flash": request.query_params.get("flash"),
+            "error": None,
+        },
+    )
+
+
+@app.post("/superadmin/brands/new", response_class=HTMLResponse)
+async def superadmin_new_brand(
+    request: Request,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    logo: UploadFile = File(...),
+):
+    _require_superadmin(request)
+    name = name.strip()
+    existing = find_brand(db, name)
+    if not name or existing:
+        brands = db.query(Brand).order_by(func.lower(Brand.name)).all()
+        return templates.TemplateResponse(
+            "superadmin_brands.html",
+            {
+                "request": request,
+                "mount_prefix": _mount_prefix(request),
+                "brands": brands,
+                "flash": None,
+                "error": "Le nom de marque est vide ou déjà présent dans le registre." if existing else "Le nom de marque est obligatoire.",
+            },
+            status_code=400,
+        )
+    suffix = Path(logo.filename or "logo.png").suffix or ".png"
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    (config.LOGO_DIR / filename).write_bytes(await logo.read())
+    brand = Brand(name=name, logo_path=filename)
+    db.add(brand)
+    db.commit()
+    db.refresh(brand)
+    applied = apply_brand_logo_to_all_matching(db, brand)
+    return RedirectResponse(
+        f"/superadmin/brands?flash=Marque « {name} » ajoutée — logo rattaché à {applied} promotion(s) existante(s).",
+        status_code=303,
+    )
+
+
+@app.post("/superadmin/brands/{brand_id}/logo", response_class=HTMLResponse)
+async def superadmin_replace_brand_logo(
+    brand_id: int, request: Request, db: Session = Depends(get_db), logo: UploadFile = File(...)
+):
+    _require_superadmin(request)
+    brand = db.query(Brand).filter(Brand.id == brand_id).first()
+    if not brand:
+        raise HTTPException(status_code=404)
+    suffix = Path(logo.filename or "logo.png").suffix or ".png"
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    (config.LOGO_DIR / filename).write_bytes(await logo.read())
+    brand.logo_path = filename
+    db.commit()
+    applied = apply_brand_logo_to_all_matching(db, brand)
+    return RedirectResponse(
+        f"/superadmin/brands?flash=Logo de « {brand.name} » mis à jour — rattaché à {applied} promotion(s) existante(s).",
+        status_code=303,
+    )
+
+
+@app.post("/superadmin/brands/{brand_id}/delete")
+def superadmin_delete_brand(brand_id: int, request: Request, db: Session = Depends(get_db)):
+    _require_superadmin(request)
+    brand = db.query(Brand).filter(Brand.id == brand_id).first()
+    if brand:
+        db.delete(brand)
+        db.commit()
+    return RedirectResponse("/superadmin/brands", status_code=303)
 
 
 @app.get("/hello", response_class=HTMLResponse)

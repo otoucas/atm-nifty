@@ -144,6 +144,23 @@ class Promotion(Base):
         return True
 
 
+class Brand(Base):
+    """Registre coopératif des marques : un logo choisi une fois par un
+    superadmin (page /superadmin/brands) et rattaché par nom à toutes les
+    promotions correspondantes, dans tous les points de vente — évite que
+    chaque pharmacie corrige le même logo mal détecté une à une (demande
+    Olivier du 2026-07-14). Priorité d'affichage sur une promotion donnée :
+    logo_path propre à la promo (upload manuel du point de vente) > logo de
+    marque ci-dessous > logo_url auto-détecté (Clearbit, best-effort)."""
+
+    __tablename__ = "brands"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), unique=True, nullable=False, index=True)
+    logo_path = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class GeneratedCode(Base):
     __tablename__ = "generated_codes"
 

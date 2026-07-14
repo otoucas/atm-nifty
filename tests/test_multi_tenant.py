@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import config, highco, main
 from app.auth import hash_password
-from app.models import INTEGRATION_ERPNEXT, INTEGRATION_STANDALONE, STATUS_ACTIVE, GeneratedCode, Promotion, Store
+from app.models import INTEGRATION_ERPNEXT, INTEGRATION_STANDALONE, STATUS_ACTIVE, Brand, GeneratedCode, Promotion, Store
 
 
 def _client(db):
@@ -284,6 +284,132 @@ def test_edit_products_form_prefills_and_saves(db):
         main.app.dependency_overrides.clear()
 
 
+def test_live_edit_field_updates_brand_and_dates(db):
+    """Édition en direct des cellules du tableau (demande Olivier du
+    2026-07-14) : chaque case se sauvegarde par une requête AJAX indépendante
+    vers /admin/promotions/{id}/field, sans recharger la page."""
+    store = _make_store(db, "LYO")
+    store.contact_email = "contact@hellopharmacie.com"
+    store.password_hash = hash_password("un-bon-mot-de-passe")
+    promo = Promotion(store_id=store.id, brand_name="Fixodent", highco_reference="ref-a", status=STATUS_ACTIVE)
+    db.add(promo)
+    db.commit()
+    db.refresh(promo)
+
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/LYO/admin/login", data={"email": store.contact_email, "password": "un-bon-mot-de-passe"})
+
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "brand_name", "value": "Sensodyne"})
+            assert resp.status_code == 200
+            assert resp.json() == {"ok": True}
+
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "valid_from", "value": "2026-08-01"})
+            assert resp.json() == {"ok": True}
+
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "valid_until", "value": ""})
+            assert resp.json() == {"ok": True}
+        db.refresh(promo)
+        assert promo.brand_name == "Sensodyne"
+        assert promo.valid_from.isoformat() == "2026-08-01"
+        assert promo.valid_until is None
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_live_edit_field_rejects_invalid_input(db):
+    store = _make_store(db, "LYO")
+    store.contact_email = "contact@hellopharmacie.com"
+    store.password_hash = hash_password("un-bon-mot-de-passe")
+    promo = Promotion(store_id=store.id, brand_name="Fixodent", highco_reference="ref-a", status=STATUS_ACTIVE)
+    db.add(promo)
+    db.commit()
+    db.refresh(promo)
+
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/LYO/admin/login", data={"email": store.contact_email, "password": "un-bon-mot-de-passe"})
+
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "brand_name", "value": "   "})
+            assert resp.status_code == 400
+            assert resp.json()["ok"] is False
+
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "valid_from", "value": "pas-une-date"})
+            assert resp.status_code == 400
+
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "highco_reference", "value": "hack"})
+            assert resp.status_code == 400
+        db.refresh(promo)
+        assert promo.brand_name == "Fixodent"
+        assert promo.highco_reference == "ref-a"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_live_edit_field_requires_login(db):
+    store = _make_store(db, "LYO")
+    promo = Promotion(store_id=store.id, brand_name="Fixodent", highco_reference="ref-a", status=STATUS_ACTIVE)
+    db.add(promo)
+    db.commit()
+    db.refresh(promo)
+
+    client = _client(db)
+    try:
+        with client as c:
+            resp = c.post(
+                f"/LYO/admin/promotions/{promo.id}/field",
+                data={"field": "brand_name", "value": "Sensodyne"},
+                follow_redirects=False,
+            )
+        assert resp.status_code in (303, 307)
+        db.refresh(promo)
+        assert promo.brand_name == "Fixodent"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_poll_now_redirects_with_flash_when_store_has_no_gmail_integration(db):
+    store = _make_store(db, "LYO", integration=INTEGRATION_STANDALONE)
+    store.contact_email = "contact@hellopharmacie.com"
+    store.password_hash = hash_password("un-bon-mot-de-passe")
+    db.commit()
+
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/LYO/admin/login", data={"email": store.contact_email, "password": "un-bon-mot-de-passe"})
+            resp = c.post("/LYO/admin/poll-now", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "/LYO/admin/pending" in resp.headers["location"]
+        assert "Gmail" in resp.headers["location"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_poll_now_redirects_with_flash_when_gmail_not_configured(db, monkeypatch):
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "")
+    client = _client(db)
+    try:
+        with client as c:
+            pass  # déclenche init_db() au démarrage, qui crée le magasin par défaut (erpnext)
+        store = db.query(Store).filter(Store.integration == INTEGRATION_ERPNEXT).one()
+        store.password_hash = hash_password("un-bon-mot-de-passe")
+        if not store.contact_email:
+            store.contact_email = "contact@hellopharmacie.com"
+        db.commit()
+
+        with client as c:
+            c.post(f"/{store.code}/admin/login", data={"email": store.contact_email, "password": "un-bon-mot-de-passe"})
+            resp = c.post(f"/{store.code}/admin/poll-now", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "configur" in resp.headers["location"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_generate_code_rate_limited_after_threshold(db, monkeypatch):
     monkeypatch.setattr(config, "CODE_GENERATION_RATE_LIMIT_COUNT", 2)
     monkeypatch.setattr(highco, "generate_code", lambda ref: "FAKE-CODE")
@@ -354,6 +480,104 @@ def test_generate_code_scoped_to_its_own_store(db, monkeypatch):
         with client as c:
             resp = c.post(f"/GRE/generate/{promo.id}", headers={"X-Requested-With": "fetch"})
         assert resp.status_code == 404
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_superadmin_brands_requires_login(db):
+    client = _client(db)
+    try:
+        with client as c:
+            resp = c.get("/superadmin/brands", follow_redirects=False)
+        assert resp.status_code == 307
+        assert resp.headers["location"] == "/superadmin/login"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_superadmin_can_add_brand_and_retroactively_applies_logo(db):
+    """Demande Olivier du 2026-07-14 : un logo de marque choisi une fois par
+    le superadmin se rattache automatiquement aux promotions déjà en base,
+    tous points de vente confondus — sauf celles qui ont déjà leur propre
+    visuel (respecté, pas écrasé)."""
+    store = _make_store(db, "LYO")
+    matching = Promotion(store_id=store.id, brand_name="Fixodent", highco_reference="ref-a", status=STATUS_ACTIVE)
+    already_customized = Promotion(
+        store_id=store.id, brand_name="Fixodent", highco_reference="ref-b", status=STATUS_ACTIVE, logo_path="existing.png"
+    )
+    other_brand = Promotion(store_id=store.id, brand_name="Sensodyne", highco_reference="ref-c", status=STATUS_ACTIVE)
+    db.add_all([matching, already_customized, other_brand])
+    db.commit()
+    db.refresh(matching)
+    db.refresh(already_customized)
+    db.refresh(other_brand)
+
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/superadmin/login", data={"password": config.ADMIN_PASSWORD})
+            resp = c.post(
+                "/superadmin/brands/new",
+                data={"name": "Fixodent"},
+                files={"logo": ("logo.png", b"fake-image-bytes", "image/png")},
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        brand = db.query(Brand).filter(Brand.name == "Fixodent").one()
+        assert brand.logo_path
+        db.refresh(matching)
+        db.refresh(already_customized)
+        db.refresh(other_brand)
+        assert matching.logo_path == brand.logo_path
+        assert already_customized.logo_path == "existing.png"
+        assert other_brand.logo_path is None
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_new_promotion_auto_attaches_matching_brand_logo(db):
+    store = _make_store(db, "LYO")
+    store.contact_email = "contact@hellopharmacie.com"
+    store.password_hash = hash_password("un-bon-mot-de-passe")
+    brand = Brand(name="Fixodent", logo_path="brand-logo.png")
+    db.add(brand)
+    db.commit()
+
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/LYO/admin/login", data={"email": store.contact_email, "password": "un-bon-mot-de-passe"})
+            resp = c.post(
+                "/LYO/admin/promotions/new",
+                data={"brand_name": "Fixodent", "highco_reference": "https://example.com/ref"},
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        promo = db.query(Promotion).filter(Promotion.store_id == store.id).one()
+        assert promo.logo_path == "brand-logo.png"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_live_edit_brand_name_attaches_matching_brand_logo(db):
+    store = _make_store(db, "LYO")
+    store.contact_email = "contact@hellopharmacie.com"
+    store.password_hash = hash_password("un-bon-mot-de-passe")
+    brand = Brand(name="Sensodyne", logo_path="sensodyne-logo.png")
+    promo = Promotion(store_id=store.id, brand_name="Fixodent", highco_reference="ref-a", status=STATUS_ACTIVE)
+    db.add_all([brand, promo])
+    db.commit()
+    db.refresh(promo)
+
+    client = _client(db)
+    try:
+        with client as c:
+            c.post("/LYO/admin/login", data={"email": store.contact_email, "password": "un-bon-mot-de-passe"})
+            resp = c.post(f"/LYO/admin/promotions/{promo.id}/field", data={"field": "brand_name", "value": "Sensodyne"})
+        assert resp.json() == {"ok": True}
+        db.refresh(promo)
+        assert promo.brand_name == "Sensodyne"
+        assert promo.logo_path == "sensodyne-logo.png"
     finally:
         main.app.dependency_overrides.clear()
 

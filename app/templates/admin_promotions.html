@@ -16,14 +16,14 @@
   <thead><tr><th>Visuel</th><th>Marque</th><th>Montant</th><th>Produits / EAN</th><th>Validité</th><th>Source</th><th></th></tr></thead>
   <tbody>
     {% for promo in active %}
-    <tr class="{{ 'row-conflict' if promo.id in conflict_ids else '' }}">
+    <tr class="{{ 'row-conflict' if promo.id in conflict_ids else '' }}" data-promo-id="{{ promo.id }}">
       <td>
         {% if promo.logo_path %}<img class="thumb" src="{{ mount_prefix|default('') }}/media/logos/{{ promo.logo_path }}" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;">
         {% elif promo.logo_url %}<img class="thumb" src="{{ promo.logo_url }}" style="height:36px; max-width:60px; object-fit:contain; cursor:zoom-in;" onerror="this.style.display='none'">
         {% else %}—{% endif %}
       </td>
-      <td>{{ promo.brand_name }}</td>
-      <td>{{ promo.operation_label or '—' }}</td>
+      <td class="editable-cell" contenteditable="true" spellcheck="false" data-field="brand_name">{{ promo.brand_name }}</td>
+      <td class="editable-cell" contenteditable="true" spellcheck="false" data-field="operation_label">{{ promo.operation_label or '' }}</td>
       <td>
         {% if promo.concerned_products or promo.product_codes %}
           <div class="products-summary">
@@ -36,7 +36,11 @@
         {% endif %}
         <a href="{{ url_prefix|default('') }}/admin/promotions/{{ promo.id }}/products">✎ Modifier</a>
       </td>
-      <td>{{ promo.valid_from or '?' }} → {{ promo.valid_until or '?' }}</td>
+      <td>
+        <input type="date" class="cell-date-input" data-field="valid_from" value="{{ promo.valid_from.isoformat() if promo.valid_from else '' }}">
+        →
+        <input type="date" class="cell-date-input" data-field="valid_until" value="{{ promo.valid_until.isoformat() if promo.valid_until else '' }}">
+      </td>
       <td>{{ promo.source }}</td>
       <td style="display:flex; gap:8px; align-items:center;">
         <form method="post" action="{{ url_prefix|default('') }}/admin/promotions/{{ promo.id }}/logo" enctype="multipart/form-data" style="margin:0;">
@@ -76,4 +80,59 @@
 {% else %}
 <div class="empty-state">Aucune promotion archivée.</div>
 {% endif %}
+
+<script>
+(function () {
+  var base = "{{ url_prefix|default('') }}";
+
+  function save(el, field, value) {
+    var tr = el.closest('tr');
+    var promoId = tr.dataset.promoId;
+    el.classList.remove('save-ok', 'save-error');
+    el.classList.add('is-saving');
+    var body = new URLSearchParams({ field: field, value: value });
+    fetch(base + "/admin/promotions/" + promoId + "/field", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body,
+    })
+      .then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
+      .then(function (result) {
+        el.classList.remove('is-saving');
+        if (!result.ok || !result.data.ok) {
+          el.classList.add('save-error');
+          alert((result.data && result.data.error) || "Échec de l'enregistrement.");
+          return;
+        }
+        el.classList.add('save-ok');
+        setTimeout(function () { el.classList.remove('save-ok'); }, 900);
+      })
+      .catch(function () {
+        el.classList.remove('is-saving');
+        el.classList.add('save-error');
+        alert("Connexion impossible — la modification n'a pas été enregistrée.");
+      });
+  }
+
+  document.querySelectorAll('table.admin-table td.editable-cell[data-field]').forEach(function (cell) {
+    var lastValue = cell.textContent.trim();
+    cell.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); cell.blur(); }
+      if (e.key === 'Escape') { cell.textContent = lastValue; cell.blur(); }
+    });
+    cell.addEventListener('blur', function () {
+      var value = cell.textContent.trim();
+      if (value === lastValue) return;
+      lastValue = value;
+      save(cell, cell.dataset.field, value);
+    });
+  });
+
+  document.querySelectorAll('table.admin-table input.cell-date-input[data-field]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      save(input, input.dataset.field, input.value);
+    });
+  });
+})();
+</script>
 {% endblock %}

@@ -549,6 +549,22 @@ table.promo-table th[aria-sort="descending"]::after { content: "↓"; opacity: 1
 }
 .col-resize-handle:hover, .col-resize-handle.active { background: var(--accent); opacity: 0.35; }
 
+td.editable-cell {
+  cursor: text;
+  white-space: normal;
+  border-radius: 6px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+td.editable-cell:hover { background: var(--bg-soft); }
+td.editable-cell:focus { outline: none; box-shadow: inset 0 0 0 2px var(--accent); background: var(--card-bg); }
+td.editable-cell:empty::before { content: "—"; color: var(--muted); }
+td.editable-cell.is-saving { opacity: 0.6; }
+td.editable-cell.save-ok { box-shadow: inset 0 0 0 2px var(--accent); }
+td.editable-cell.save-error { box-shadow: inset 0 0 0 2px var(--danger); }
+
+input.cell-date-input.is-saving { opacity: 0.6; }
+input.cell-date-input.save-error { border-color: var(--danger); }
+
 tr.row-complete { background: var(--accent-soft); }
 tr.row-incomplete { background: var(--danger-soft); }
 tr.row-conflict, .tile.conflict { background: #fff6d6 !important; }
@@ -588,6 +604,26 @@ tr.row-conflict, .tile.conflict { background: #fff6d6 !important; }
 
 .admin-nav a:hover, .admin-nav button:hover { background: var(--bg-soft); color: var(--text); }
 .admin-nav .spacer { margin-left: auto; }
+.admin-nav .nav-right { margin-left: auto; }
+
+.gmail-poll-btn.is-loading {
+  color: var(--text);
+  cursor: progress;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--accent-soft),
+    var(--accent-soft) 10px,
+    var(--bg-soft) 10px,
+    var(--bg-soft) 20px
+  );
+  background-size: 200% 200%;
+  animation: gmail-poll-progress 1s linear infinite;
+}
+
+@keyframes gmail-poll-progress {
+  from { background-position: 0 0; }
+  to { background-position: 28px 0; }
+}
 
 h3 { font-size: 1rem; font-weight: 700; margin: 28px 0 12px; }
 
