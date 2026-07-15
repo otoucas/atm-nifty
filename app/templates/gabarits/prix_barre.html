@@ -1,0 +1,10 @@
+{% extends "gabarits/_base_affiche.html" %}
+{% block extra_style %}
+  .ancien-prix { font-size: 10mm; color: #888; text-decoration: line-through; margin-bottom: 3mm; }
+  .nouveau-prix { font-size: 45mm; font-weight: 900; color: #00A754; line-height: 1; }
+  .devise { font-size: 20mm; vertical-align: top; }
+{% endblock %}
+{% block content %}
+  {% if promotion.prix_ttc %}<div class="ancien-prix">au lieu de {{ '%.2f'|format(promotion.prix_ttc) }} €</div>{% endif %}
+  <div class="nouveau-prix">{{ promotion.message_affiche }}</div>
+{% endblock %}

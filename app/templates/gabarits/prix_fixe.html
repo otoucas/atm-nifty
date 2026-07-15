@@ -1,0 +1,10 @@
+{% extends "gabarits/_base_affiche.html" %}
+{% block extra_style %}
+  .etiquette {
+    background: #00A754; color: white; padding: 10mm 16mm; border-radius: 4mm;
+    font-size: 38mm; font-weight: 900; position: relative;
+  }
+{% endblock %}
+{% block content %}
+  <div class="etiquette">{{ promotion.message_affiche }}</div>
+{% endblock %}

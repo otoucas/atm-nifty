@@ -1,0 +1,83 @@
+{% macro page_size(format) -%}
+{%- if format == 'A3' -%}297mm 420mm{%- else -%}210mm 297mm{%- endif -%}
+{%- endmacro %}
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>{{ promotion.produit }}</title>
+<style>
+  @page { size: {{ page_size(promotion.format) }}; margin: 0; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #1a1a1a;
+    width: {{ '297mm' if promotion.format == 'A3' else '210mm' }};
+    height: {{ '420mm' if promotion.format == 'A3' else '297mm' }};
+    display: flex;
+    flex-direction: column;
+  }
+  .bandeau {
+    background: #00A754;
+    color: white;
+    padding: 14mm 12mm 8mm 12mm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .bandeau .marque {
+    font-size: 13mm;
+    font-weight: 800;
+    letter-spacing: -0.5mm;
+  }
+  .bandeau .marque span { color: #ffffff; }
+  .contenu {
+    flex: 1;
+    padding: 10mm 14mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .produit-nom {
+    font-size: 11mm;
+    font-weight: 600;
+    margin: 0 0 6mm 0;
+    max-width: 90%;
+  }
+  .labo {
+    font-size: 6mm;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1mm;
+    margin-bottom: 10mm;
+  }
+  .pied {
+    background: #f3f3f3;
+    padding: 6mm 12mm;
+    display: flex;
+    justify-content: space-between;
+    font-size: 5.5mm;
+    color: #444;
+  }
+  .accent { color: #FC5272; }
+  {% block extra_style %}{% endblock %}
+</style>
+</head>
+<body>
+  <div class="bandeau">
+    <div class="marque"><span>hello</span>pharmacie</div>
+  </div>
+  <div class="contenu">
+    <div class="produit-nom">{{ promotion.produit }}</div>
+    {% if promotion.labo %}<div class="labo">{{ promotion.labo }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </div>
+  <div class="pied">
+    <span>Offre valable du {{ promotion.date_debut.strftime('%d/%m/%Y') }} au {{ promotion.date_fin.strftime('%d/%m/%Y') }}</span>
+    <span>Dans votre pharmacie Hello, sous réserve de stock disponible</span>
+  </div>
+</body>
+</html>

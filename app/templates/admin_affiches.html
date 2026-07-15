@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block header %}Mes affiches{% endblock %}
+{% block header_link %}<a href="{{ url_prefix|default('') }}/">Retour à la grille</a>{% endblock %}
+{% block content %}
+{% include "admin_nav.html" %}
+
+<p style="color:var(--muted); font-size:0.9rem;">Promotions {{ mois }} — tout est coché par défaut, décochez ce qui ne vous concerne pas.</p>
+
+{% if not affiches %}
+<p>Aucune affiche publiée pour ce mois pour l'instant.</p>
+{% else %}
+<form method="post" action="{{ url_prefix }}/admin/affiches/generer">
+<div class="panel">
+<table class="admin-table">
+<thead><tr><th></th><th>Aperçu</th><th>Produit</th><th>Message</th><th>Format</th><th>Validité</th></tr></thead>
+<tbody>
+{% for a, selected in affiches %}
+<tr>
+  <td><input type="checkbox" name="affiche_ids" value="{{ a.id }}" {% if selected %}checked{% endif %}></td>
+  <td><div class="thumb-frame"><iframe src="/superadmin/affiches/preview/{{ a.id }}"></iframe></div></td>
+  <td>{{ a.produit }}<br><small style="color:var(--muted);">{{ a.labo or '' }}</small></td>
+  <td>{{ a.message_affiche }}</td>
+  <td>{{ a.format }}</td>
+  <td>{{ a.date_debut.strftime('%d/%m') }} → {{ a.date_fin.strftime('%d/%m') }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<div style="margin-top:16px; display:flex; gap:12px;">
+  <button type="submit" formaction="{{ url_prefix }}/admin/affiches/selection">Enregistrer ma sélection</button>
+  <button type="submit" formaction="{{ url_prefix }}/admin/affiches/generer">Télécharger le PDF prêt à imprimer</button>
+</div>
+</form>
+{% endif %}
+
+<style>
+  .thumb-frame { width: 140px; height: 198px; overflow: hidden; position: relative; border: 1px solid var(--border, #ddd); }
+  .thumb-frame iframe { width: 794px; height: 1123px; border: 0; transform: scale(0.176); transform-origin: top left; }
+</style>
+{% endblock %}

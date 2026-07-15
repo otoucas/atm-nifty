@@ -1,0 +1,9 @@
+{% extends "gabarits/_base_affiche.html" %}
+{% block extra_style %}
+  .pct { font-size: 55mm; font-weight: 900; color: #FC5272; line-height: 1; }
+  .sous-titre { font-size: 7mm; color: #1a1a1a; margin-top: 4mm; }
+{% endblock %}
+{% block content %}
+  <div class="pct">{{ promotion.message_affiche }}</div>
+  <div class="sous-titre">sur ce produit, dans votre pharmacie Hello</div>
+{% endblock %}

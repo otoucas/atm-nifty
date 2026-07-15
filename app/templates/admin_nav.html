@@ -5,6 +5,9 @@
   <a href="{{ url_prefix|default('') }}/admin/history">Historique</a>
   <a href="{{ url_prefix|default('') }}/admin/notifications">Notifications</a>
   <a href="{{ url_prefix|default('') }}/admin/mcp">Connexion IA (MCP)</a>
+  {% if store and store.code == config.DEFAULT_STORE_CODE %}
+  <a href="{{ url_prefix|default('') }}/admin/affiches">Mes affiches (bêta)</a>
+  {% endif %}
   {% if store and store.integration == 'erpnext' %}
   <form method="post" action="{{ url_prefix }}/admin/poll-now" class="gmail-poll-form" style="margin:0;">
     <button type="submit" class="gmail-poll-btn">Relancer l'import Gmail</button>

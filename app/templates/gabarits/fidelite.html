@@ -1,0 +1,11 @@
+{% extends "gabarits/_base_affiche.html" %}
+{% block extra_style %}
+  .etoile { font-size: 20mm; color: #FC5272; }
+  .msg-fidelite { font-size: 16mm; font-weight: 800; color: #00A754; margin-top: 4mm; }
+  .programme { font-size: 6mm; color: #555; margin-top: 6mm; }
+{% endblock %}
+{% block content %}
+  <div class="etoile">&#9733; &#9733; &#9733;</div>
+  <div class="msg-fidelite">{{ promotion.message_affiche }}</div>
+  <div class="programme">Programme fidélité Hello Pharmacie</div>
+{% endblock %}

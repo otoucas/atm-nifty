@@ -1,7 +1,7 @@
 import datetime
 from itertools import zip_longest
 
-from sqlalchemy import Boolean, Column, DateTime, Date, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Date, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -238,6 +238,53 @@ class StoreRequestLog(Base):
     outcome = Column(String(30), nullable=False)
     directory_flags = Column(Text, nullable=True)  # une raison "étonnante" par ligne, NULL si RAS
     store_id = Column(Integer, ForeignKey("stores.id"), nullable=True)
+
+
+AFFICHE_GABARITS = ["pourcentage", "prix_barre", "lot", "prix_fixe", "fidelite"]
+
+
+class AfficheProduit(Base):
+    """Une ligne d'affiche prête à imprimer, issue du tableau de suivi des
+    promotions (import CSV côté superadmin) — voir /superadmin/affiches.
+    Domaine volontairement séparé de Promotion (HighCo) : ici il s'agit de
+    remplacer PNR (affiches prix/EAN pour l'affichage en pharmacie), pas des
+    codes promo remis aux clients. Module en évaluation le 2026-07-15,
+    volontairement pas encore visible des vrais points de vente — voir le
+    gardien sur config.DEFAULT_STORE_CODE dans main.py."""
+
+    __tablename__ = "affiche_produits"
+
+    id = Column(Integer, primary_key=True)
+    mois = Column(String(7), nullable=False)  # "2026-01"
+    cip = Column(String(255), nullable=False)
+    produit = Column(String(255), nullable=False)
+    labo = Column(String(200), nullable=True)
+    prix_ttc = Column(Float, nullable=True)
+    message_affiche = Column(String(200), nullable=False)
+    gabarit = Column(String(30), nullable=False)
+    format = Column(String(4), nullable=False, default="A4")
+    date_debut = Column(Date, nullable=False)
+    date_fin = Column(Date, nullable=False)
+    published = Column(Boolean, nullable=False, default=False)
+
+    selections = relationship("AfficheSelection", back_populates="affiche", cascade="all, delete-orphan")
+
+
+class AfficheSelection(Base):
+    """Sélection d'une AfficheProduit par un point de vente (case cochée dans
+    son portail /​{code}/admin/affiches) — coché par défaut à la publication
+    (modèle opt-out, demande Olivier)."""
+
+    __tablename__ = "affiche_selections"
+
+    id = Column(Integer, primary_key=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False)
+    affiche_id = Column(Integer, ForeignKey("affiche_produits.id"), nullable=False)
+    selected = Column(Boolean, nullable=False, default=True)
+    prix_local = Column(Float, nullable=True)  # ajustement optionnel, rare
+
+    store = relationship("Store")
+    affiche = relationship("AfficheProduit", back_populates="selections")
 
 
 class PasswordResetLog(Base):

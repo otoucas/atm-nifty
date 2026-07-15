@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import config, contacts_directory, highco
+from .affiches import import_affiches_csv, merge_affiches_pdf, render_affiche_html
 from .auth import check_password, hash_password, is_admin, verify_store_password
 from .brands import apply_brand_logo, apply_brand_logo_to_all_matching, find_brand
 from .database import get_db, init_db
@@ -31,12 +32,15 @@ from .jobs import (
 from .monthly_preview import run_monthly_preview
 from .logos import fetch_logo_url
 from .models import (
+    AFFICHE_GABARITS,
     INTEGRATION_ERPNEXT,
     INTEGRATION_STANDALONE,
     STATUS_ACTIVE,
     STATUS_ARCHIVED,
     STATUS_PENDING,
     SOURCE_MANUAL,
+    AfficheProduit,
+    AfficheSelection,
     Brand,
     GeneratedCode,
     McpActivityLog,
@@ -76,6 +80,7 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 app.mount("/media/logos", StaticFiles(directory=config.LOGO_DIR), name="logos")
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.globals["config"] = config
 
 scheduler = BackgroundScheduler()
 
@@ -1706,6 +1711,228 @@ def superadmin_delete_brand(brand_id: int, request: Request, db: Session = Depen
         db.delete(brand)
         db.commit()
     return RedirectResponse("/superadmin/brands", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Affiches (remplacement de PNR) — module en évaluation le 2026-07-15, ouvert
+# uniquement au point de vente par défaut (config.DEFAULT_STORE_CODE) côté
+# portail. Import/aperçu/publication restent des actions superadmin.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/superadmin/affiches", response_class=HTMLResponse)
+def superadmin_affiches_index(request: Request, db: Session = Depends(get_db)):
+    _require_superadmin(request)
+    mois_disponibles = [
+        row[0] for row in db.query(AfficheProduit.mois).distinct().order_by(AfficheProduit.mois.desc()).all()
+    ]
+    return templates.TemplateResponse(
+        "superadmin_affiches.html",
+        {
+            "request": request, "mount_prefix": _mount_prefix(request),
+            "mois": None, "mois_disponibles": mois_disponibles,
+            "flash": request.query_params.get("flash"),
+        },
+    )
+
+
+@app.post("/superadmin/affiches/import", response_class=HTMLResponse)
+def superadmin_affiches_import(request: Request, fichier: UploadFile = File(...), db: Session = Depends(get_db)):
+    _require_superadmin(request)
+    resultat = import_affiches_csv(db, fichier.file.read())
+    flash = f"{resultat['importees']} ligne(s) importée(s), {resultat['ignorees']} ignorée(s)."
+    if resultat["mois"]:
+        premier_mois = resultat["mois"][0]
+        return RedirectResponse(f"/superadmin/affiches/{premier_mois}?flash={flash}", status_code=303)
+    return RedirectResponse(f"/superadmin/affiches?flash={flash}", status_code=303)
+
+
+@app.get("/superadmin/affiches/preview/{affiche_id}", response_class=HTMLResponse)
+def affiche_preview_html(affiche_id: int, request: Request, db: Session = Depends(get_db)):
+    """Rendu HTML brut d'une affiche (miniature en iframe) — accessible au
+    superadmin (tout état) ou à un point de vente déjà connecté à condition
+    que l'affiche soit publiée (portail /{code}/admin/affiches)."""
+    affiche = db.query(AfficheProduit).filter(AfficheProduit.id == affiche_id).first()
+    if not affiche:
+        raise HTTPException(status_code=404)
+    autorise = is_admin(request) or (affiche.published and any(k.startswith("store_admin_") for k in request.session))
+    if not autorise:
+        raise HTTPException(status_code=403)
+    return HTMLResponse(render_affiche_html(templates.env, affiche))
+
+
+@app.get("/superadmin/affiches/{mois}", response_class=HTMLResponse)
+def superadmin_affiches_mois(mois: str, request: Request, db: Session = Depends(get_db)):
+    _require_superadmin(request)
+    affiches = db.query(AfficheProduit).filter(AfficheProduit.mois == mois).order_by(AfficheProduit.produit).all()
+    return templates.TemplateResponse(
+        "superadmin_affiches.html",
+        {
+            "request": request, "mount_prefix": _mount_prefix(request),
+            "mois": mois, "affiches": affiches, "gabarits": AFFICHE_GABARITS,
+            "flash": request.query_params.get("flash"),
+        },
+    )
+
+
+@app.post("/superadmin/affiches/{affiche_id}/update")
+def superadmin_affiches_update(
+    affiche_id: int, request: Request, db: Session = Depends(get_db),
+    message_affiche: str = Form(...), gabarit: str = Form(...), format: str = Form(...),
+    date_debut: datetime.date = Form(...), date_fin: datetime.date = Form(...),
+):
+    _require_superadmin(request)
+    affiche = db.query(AfficheProduit).filter(AfficheProduit.id == affiche_id).first()
+    if not affiche:
+        raise HTTPException(status_code=404)
+    affiche.message_affiche = message_affiche
+    affiche.gabarit = gabarit
+    affiche.format = format
+    affiche.date_debut = date_debut
+    affiche.date_fin = date_fin
+    db.commit()
+    return RedirectResponse(f"/superadmin/affiches/{affiche.mois}", status_code=303)
+
+
+@app.post("/superadmin/affiches/publish/{mois}")
+def superadmin_affiches_publish(mois: str, request: Request, db: Session = Depends(get_db)):
+    _require_superadmin(request)
+    affiches = db.query(AfficheProduit).filter(AfficheProduit.mois == mois).all()
+    for affiche in affiches:
+        affiche.published = True
+    db.flush()
+    # Diffusion volontairement limitée au magasin par défaut pendant
+    # l'évaluation du module (voir garde-fous ci-dessous sur les routes portail).
+    default_store = db.query(Store).filter(Store.code == config.DEFAULT_STORE_CODE).first()
+    if default_store:
+        for affiche in affiches:
+            exists = db.query(AfficheSelection).filter_by(store_id=default_store.id, affiche_id=affiche.id).first()
+            if not exists:
+                db.add(AfficheSelection(store_id=default_store.id, affiche_id=affiche.id, selected=True))
+    db.commit()
+    return RedirectResponse(f"/superadmin/affiches/{mois}?flash=Mois publié.", status_code=303)
+
+
+def _mois_courant_affiches_publiees(db: Session):
+    row = (
+        db.query(AfficheProduit.mois)
+        .filter(AfficheProduit.published.is_(True))
+        .order_by(AfficheProduit.mois.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def _appliquer_selection_affiches(store_id: int, mois: str, affiche_ids: list[int], db: Session):
+    affiches_du_mois = db.query(AfficheProduit).filter(AfficheProduit.mois == mois, AfficheProduit.published.is_(True)).all()
+    ids_coches = set(affiche_ids)
+    for affiche in affiches_du_mois:
+        sel = db.query(AfficheSelection).filter_by(store_id=store_id, affiche_id=affiche.id).first()
+        if not sel:
+            sel = AfficheSelection(store_id=store_id, affiche_id=affiche.id)
+            db.add(sel)
+        sel.selected = affiche.id in ids_coches
+    db.commit()
+    return affiches_du_mois
+
+
+def _admin_affiches_response(request: Request, db: Session, store: Store):
+    _require_store_admin(request, store)
+    if store.code != config.DEFAULT_STORE_CODE:
+        # Module pas encore ouvert aux autres points de vente — voir HANDOFF.
+        raise HTTPException(status_code=404, detail="Introuvable")
+    mois = _mois_courant_affiches_publiees(db)
+    affiches_selection = []
+    if mois:
+        affiches = db.query(AfficheProduit).filter(AfficheProduit.mois == mois, AfficheProduit.published.is_(True)).order_by(AfficheProduit.produit).all()
+        for affiche in affiches:
+            sel = db.query(AfficheSelection).filter_by(store_id=store.id, affiche_id=affiche.id).first()
+            affiches_selection.append((affiche, sel.selected if sel else True))
+    return templates.TemplateResponse(
+        "admin_affiches.html",
+        {
+            "request": request, "mount_prefix": _mount_prefix(request),
+            "mois": mois or "—", "affiches": affiches_selection,
+            "url_prefix": f"{_store_url_prefix(request, store)}", "store": store,
+        },
+    )
+
+
+@app.get("/{code}/admin/affiches", response_class=HTMLResponse)
+def admin_affiches_for_store(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code)):
+    return _admin_affiches_response(request, db, store)
+
+
+@app.get("/admin/affiches", response_class=HTMLResponse)
+def admin_affiches_legacy(request: Request, db: Session = Depends(get_db), store: Store = Depends(get_default_store)):
+    return _admin_affiches_response(request, db, store)
+
+
+def _admin_affiches_selection_response(request: Request, db: Session, store: Store, affiche_ids: list[int]):
+    _require_store_admin(request, store)
+    if store.code != config.DEFAULT_STORE_CODE:
+        raise HTTPException(status_code=404, detail="Introuvable")
+    mois = _mois_courant_affiches_publiees(db)
+    if mois:
+        _appliquer_selection_affiches(store.id, mois, affiche_ids, db)
+    return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/affiches", status_code=303)
+
+
+@app.post("/{code}/admin/affiches/selection")
+def admin_affiches_selection_for_store(
+    request: Request, affiche_ids: list[int] = Form(default=[]),
+    db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code),
+):
+    return _admin_affiches_selection_response(request, db, store, affiche_ids)
+
+
+@app.post("/admin/affiches/selection")
+def admin_affiches_selection_legacy(
+    request: Request, affiche_ids: list[int] = Form(default=[]),
+    db: Session = Depends(get_db), store: Store = Depends(get_default_store),
+):
+    return _admin_affiches_selection_response(request, db, store, affiche_ids)
+
+
+def _admin_affiches_generer_response(request: Request, db: Session, store: Store, affiche_ids: list[int]):
+    _require_store_admin(request, store)
+    if store.code != config.DEFAULT_STORE_CODE:
+        raise HTTPException(status_code=404, detail="Introuvable")
+    mois = _mois_courant_affiches_publiees(db)
+    if not mois:
+        return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/affiches", status_code=303)
+    _appliquer_selection_affiches(store.id, mois, affiche_ids, db)
+    affiches_selectionnees = (
+        db.query(AfficheProduit)
+        .join(AfficheSelection, AfficheSelection.affiche_id == AfficheProduit.id)
+        .filter(AfficheSelection.store_id == store.id, AfficheSelection.selected.is_(True), AfficheProduit.mois == mois)
+        .order_by(AfficheProduit.produit)
+        .all()
+    )
+    if not affiches_selectionnees:
+        return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/affiches", status_code=303)
+    pdf_bytes = merge_affiches_pdf(templates.env, affiches_selectionnees)
+    filename = f"affiches-{store.code}-{mois}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/{code}/admin/affiches/generer")
+def admin_affiches_generer_for_store(
+    request: Request, affiche_ids: list[int] = Form(default=[]),
+    db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code),
+):
+    return _admin_affiches_generer_response(request, db, store, affiche_ids)
+
+
+@app.post("/admin/affiches/generer")
+def admin_affiches_generer_legacy(
+    request: Request, affiche_ids: list[int] = Form(default=[]),
+    db: Session = Depends(get_db), store: Store = Depends(get_default_store),
+):
+    return _admin_affiches_generer_response(request, db, store, affiche_ids)
 
 
 @app.get("/hello", response_class=HTMLResponse)

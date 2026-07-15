@@ -1,0 +1,12 @@
+{% extends "gabarits/_base_affiche.html" %}
+{% block extra_style %}
+  .badge {
+    background: #FC5272; color: white; border-radius: 50%;
+    width: 70mm; height: 70mm; display: flex; align-items: center; justify-content: center;
+    font-size: 10mm; font-weight: 800; text-align: center; padding: 6mm;
+    line-height: 1.15;
+  }
+{% endblock %}
+{% block content %}
+  <div class="badge">{{ promotion.message_affiche }}</div>
+{% endblock %}
