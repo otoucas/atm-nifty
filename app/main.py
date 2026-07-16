@@ -1,3 +1,4 @@
+import copy
 import csv
 import datetime
 import io
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import config, contacts_directory, highco
-from .affiches import import_affiches_csv, merge_affiches_pdf, render_affiche_html
+from .affiches import import_affiches_csv, merge_affiches_pdf, parse_french_price, render_affiche_html
 from .auth import check_password, hash_password, is_admin, verify_store_password
 from .brands import apply_brand_logo, apply_brand_logo_to_all_matching, find_brand
 from .database import get_db, init_db
@@ -1844,7 +1845,13 @@ def _mois_courant_affiches_publiees(db: Session):
     return row[0] if row else None
 
 
-def _appliquer_selection_affiches(store_id: int, mois: str, affiche_ids: list[int], db: Session):
+def _appliquer_selection_affiches(
+    store_id: int, mois: str, affiche_ids: list[int], db: Session,
+    prix_locaux: dict[int, float | None] | None = None,
+):
+    """prix_locaux : ajustement optionnel et rare (promos généralement
+    harmonisées entre officines) — {affiche_id: prix ou None pour effacer}."""
+    prix_locaux = prix_locaux or {}
     affiches_du_mois = db.query(AfficheProduit).filter(AfficheProduit.mois == mois, AfficheProduit.published.is_(True)).all()
     ids_coches = set(affiche_ids)
     for affiche in affiches_du_mois:
@@ -1853,8 +1860,20 @@ def _appliquer_selection_affiches(store_id: int, mois: str, affiche_ids: list[in
             sel = AfficheSelection(store_id=store_id, affiche_id=affiche.id)
             db.add(sel)
         sel.selected = affiche.id in ids_coches
+        if affiche.id in prix_locaux:
+            sel.prix_local = prix_locaux[affiche.id]
     db.commit()
     return affiches_du_mois
+
+
+async def _prix_locaux_from_form(request: Request, affiche_ids_connus: list[int]) -> dict[int, float | None]:
+    form = await request.form()
+    prix_locaux = {}
+    for affiche_id in affiche_ids_connus:
+        valeur = form.get(f"prix_local_{affiche_id}")
+        if valeur is not None:
+            prix_locaux[affiche_id] = parse_french_price(valeur)
+    return prix_locaux
 
 
 def _admin_affiches_response(request: Request, db: Session, store: Store):
@@ -1868,7 +1887,7 @@ def _admin_affiches_response(request: Request, db: Session, store: Store):
         affiches = db.query(AfficheProduit).filter(AfficheProduit.mois == mois, AfficheProduit.published.is_(True)).order_by(AfficheProduit.produit).all()
         for affiche in affiches:
             sel = db.query(AfficheSelection).filter_by(store_id=store.id, affiche_id=affiche.id).first()
-            affiches_selection.append((affiche, sel.selected if sel else True))
+            affiches_selection.append((affiche, sel.selected if sel else True, sel.prix_local if sel else None))
     return templates.TemplateResponse(
         "admin_affiches.html",
         {
@@ -1889,40 +1908,44 @@ def admin_affiches_legacy(request: Request, db: Session = Depends(get_db), store
     return _admin_affiches_response(request, db, store)
 
 
-def _admin_affiches_selection_response(request: Request, db: Session, store: Store, affiche_ids: list[int]):
+async def _admin_affiches_selection_response(request: Request, db: Session, store: Store, affiche_ids: list[int]):
     _require_store_admin(request, store)
     if store.code != config.DEFAULT_STORE_CODE:
         raise HTTPException(status_code=404, detail="Introuvable")
     mois = _mois_courant_affiches_publiees(db)
     if mois:
-        _appliquer_selection_affiches(store.id, mois, affiche_ids, db)
+        affiches_du_mois = db.query(AfficheProduit).filter(AfficheProduit.mois == mois, AfficheProduit.published.is_(True)).all()
+        prix_locaux = await _prix_locaux_from_form(request, [a.id for a in affiches_du_mois])
+        _appliquer_selection_affiches(store.id, mois, affiche_ids, db, prix_locaux)
     return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/affiches", status_code=303)
 
 
 @app.post("/{code}/admin/affiches/selection")
-def admin_affiches_selection_for_store(
+async def admin_affiches_selection_for_store(
     request: Request, affiche_ids: list[int] = Form(default=[]),
     db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code),
 ):
-    return _admin_affiches_selection_response(request, db, store, affiche_ids)
+    return await _admin_affiches_selection_response(request, db, store, affiche_ids)
 
 
 @app.post("/admin/affiches/selection")
-def admin_affiches_selection_legacy(
+async def admin_affiches_selection_legacy(
     request: Request, affiche_ids: list[int] = Form(default=[]),
     db: Session = Depends(get_db), store: Store = Depends(get_default_store),
 ):
-    return _admin_affiches_selection_response(request, db, store, affiche_ids)
+    return await _admin_affiches_selection_response(request, db, store, affiche_ids)
 
 
-def _admin_affiches_generer_response(request: Request, db: Session, store: Store, affiche_ids: list[int]):
+async def _admin_affiches_generer_response(request: Request, db: Session, store: Store, affiche_ids: list[int]):
     _require_store_admin(request, store)
     if store.code != config.DEFAULT_STORE_CODE:
         raise HTTPException(status_code=404, detail="Introuvable")
     mois = _mois_courant_affiches_publiees(db)
     if not mois:
         return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/affiches", status_code=303)
-    _appliquer_selection_affiches(store.id, mois, affiche_ids, db)
+    affiches_du_mois = db.query(AfficheProduit).filter(AfficheProduit.mois == mois, AfficheProduit.published.is_(True)).all()
+    prix_locaux = await _prix_locaux_from_form(request, [a.id for a in affiches_du_mois])
+    _appliquer_selection_affiches(store.id, mois, affiche_ids, db, prix_locaux)
     affiches_selectionnees = (
         db.query(AfficheProduit)
         .join(AfficheSelection, AfficheSelection.affiche_id == AfficheProduit.id)
@@ -1932,7 +1955,19 @@ def _admin_affiches_generer_response(request: Request, db: Session, store: Store
     )
     if not affiches_selectionnees:
         return RedirectResponse(f"{_store_url_prefix(request, store)}/admin/affiches", status_code=303)
-    pdf_bytes = merge_affiches_pdf(templates.env, affiches_selectionnees)
+    selections_par_affiche = {
+        s.affiche_id: s for s in db.query(AfficheSelection).filter_by(store_id=store.id).all()
+    }
+    affiches_a_rendre = []
+    for affiche in affiches_selectionnees:
+        sel = selections_par_affiche.get(affiche.id)
+        if sel and sel.prix_local is not None:
+            affiche_rendue = copy.copy(affiche)
+            affiche_rendue.prix_ttc = sel.prix_local
+            affiches_a_rendre.append(affiche_rendue)
+        else:
+            affiches_a_rendre.append(affiche)
+    pdf_bytes = merge_affiches_pdf(templates.env, affiches_a_rendre)
     filename = f"affiches-{store.code}-{mois}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes), media_type="application/pdf",
@@ -1941,19 +1976,19 @@ def _admin_affiches_generer_response(request: Request, db: Session, store: Store
 
 
 @app.post("/{code}/admin/affiches/generer")
-def admin_affiches_generer_for_store(
+async def admin_affiches_generer_for_store(
     request: Request, affiche_ids: list[int] = Form(default=[]),
     db: Session = Depends(get_db), store: Store = Depends(get_store_for_admin_by_code),
 ):
-    return _admin_affiches_generer_response(request, db, store, affiche_ids)
+    return await _admin_affiches_generer_response(request, db, store, affiche_ids)
 
 
 @app.post("/admin/affiches/generer")
-def admin_affiches_generer_legacy(
+async def admin_affiches_generer_legacy(
     request: Request, affiche_ids: list[int] = Form(default=[]),
     db: Session = Depends(get_db), store: Store = Depends(get_default_store),
 ):
-    return _admin_affiches_generer_response(request, db, store, affiche_ids)
+    return await _admin_affiches_generer_response(request, db, store, affiche_ids)
 
 
 @app.get("/hello", response_class=HTMLResponse)

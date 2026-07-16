@@ -12,9 +12,9 @@
 <form method="post" action="{{ url_prefix }}/admin/affiches/generer">
 <div class="panel">
 <table class="admin-table">
-<thead><tr><th></th><th>Aperçu</th><th>Produit</th><th>Message</th><th>Format</th><th>Validité</th></tr></thead>
+<thead><tr><th></th><th>Aperçu</th><th>Produit</th><th>Message</th><th>Format</th><th>Validité</th><th>Prix local (optionnel)</th></tr></thead>
 <tbody>
-{% for a, selected in affiches %}
+{% for a, selected, prix_local in affiches %}
 <tr>
   <td><input type="checkbox" name="affiche_ids" value="{{ a.id }}" {% if selected %}checked{% endif %}></td>
   <td><div class="thumb-frame"><iframe src="/superadmin/affiches/preview/{{ a.id }}"></iframe></div></td>
@@ -22,11 +22,19 @@
   <td>{{ a.message_affiche }}</td>
   <td>{{ a.format }}</td>
   <td>{{ a.date_debut.strftime('%d/%m') }} → {{ a.date_fin.strftime('%d/%m') }}</td>
+  <td>
+    <input type="text" name="prix_local_{{ a.id }}" value="{{ '%.2f'|format(prix_local) if prix_local is not none else '' }}"
+           placeholder="{{ '%.2f'|format(a.prix_ttc) if a.prix_ttc else '—' }}" style="width:80px;">
+  </td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
+<p style="color:var(--muted); font-size:0.85rem;">
+  Le prix local reste rarement nécessaire (promotions généralement harmonisées entre pharmacies)
+  — ne le renseigner que si votre prix de vente diffère du prix national indiqué en placeholder.
+</p>
 <div style="margin-top:16px; display:flex; gap:12px;">
   <button type="submit" formaction="{{ url_prefix }}/admin/affiches/selection">Enregistrer ma sélection</button>
   <button type="submit" formaction="{{ url_prefix }}/admin/affiches/generer">Télécharger le PDF prêt à imprimer</button>
